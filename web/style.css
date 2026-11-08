@@ -97,7 +97,7 @@ html, body {
 
 .result-ok { background: #052e16; border-color: var(--ok); }
 .result-unmapped, .result-no_district { background: #431407; border-color: var(--warn); }
-.result-not_found, .result-error { background: #450a0a; border-color: var(--error); }
+.result-not_found, .result-error, .result-cancelled { background: #450a0a; border-color: var(--error); }
 
 .gate {
   position: fixed;

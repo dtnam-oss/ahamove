@@ -98,6 +98,7 @@
     if (r.status === 'empty') return;
     if (r.status === 'ok') showResult(r.status, r.location, r.district, r.code);
     else if (r.status === 'unmapped') showResult(r.status, 'Chưa có vị trí', r.district, r.code);
+    else if (r.status === 'cancelled') showResult(r.status, 'Đơn đã huỷ', 'Không chia chọn — tách riêng', r.code);
     else if (r.status === 'no_district') showResult(r.status, 'Chưa có quận huyện', '', r.code);
     else showResult(r.status, 'Không tìm thấy đơn', '', r.input);
     speak(r.speech);

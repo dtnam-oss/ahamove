@@ -31,13 +31,17 @@ function loadServer(tables) {
   return ctx;
 }
 
+// Mirrors the current `data` sheet: key = tracking_number. The trailing partner_order_code
+// column holds stale values from an older layout (not aligned with the row) and must be ignored.
 const DATA = [
-  ['order_id', 'partner_order_code', 'recipient_phone', 'district'],
-  ['GHNBULKY_GYE7H4UB', 'GYE7H4UB', '0900000001', 'Huyện Thanh Trì'],
-  ['GHNBULKY_GYE7Q9U3', ' gye7q9u3 ', '0900000002', 'Huyện Quốc Oai'],
-  ['GHNBULKY_AAAA1111', 'AAAA1111', '', 'Huyện Ứng Hoà'], // old-style tone placement
-  ['GHNBULKY_BBBB2222', 'BBBB2222', '', ''],
-  ['', '', '', ''],
+  ['tracking_number', 'status', 'district', 'mobile_seller', 'partner_order_code'],
+  ['GYEGFF9C', 'VERIFYING', 'Huyện Thanh Trì', '0900000001', 'GYE7R6DF'],
+  [' gyegffye ', 'VERIFYING', 'Huyện Quốc Oai', '0900000002', 'GYE7YM3A'],
+  ['AAAA1111', 'VERIFYING', 'Huyện Ứng Hoà', '', ''], // old-style tone placement
+  ['BBBB2222', 'VERIFYING', '', '', ''],
+  ['CCCC3333', 'NEED_RETURN_TO_PARTNER_ASAP', 'Huyện Thanh Trì', '', ''],
+  ['DDDD4444', ' need_return_to_partner_asap ', 'Huyện Quốc Oai', '', ''],
+  ['', '', '', '', ''],
 ];
 const CONFIG = [
   ['ma_vi_tri', 'ten_vi_tri', 'khu_vuc'],
@@ -53,43 +57,71 @@ function setup() {
   return { payload, Lookup, index: Lookup.buildIndex(payload) };
 }
 
-test('server payload has only code -> district and parsed config (no PII)', () => {
+test('server payload: tracking_number -> {district, status}, parsed config, no PII', () => {
   const { payload } = setup();
-  assert.equal(payload.orderCount, 4);
-  assert.deepEqual(Object.keys(payload.orders).sort(), ['AAAA1111', 'BBBB2222', 'GYE7H4UB', 'GYE7Q9U3']);
-  assert.equal(payload.orders.GYE7Q9U3, 'Huyện Quốc Oai');
+  assert.equal(payload.orderCount, 6);
+  assert.deepEqual(Object.keys(payload.orders).sort(), ['AAAA1111', 'BBBB2222', 'CCCC3333', 'DDDD4444', 'GYEGFF9C', 'GYEGFFYE']);
+  assert.equal(payload.orders.GYEGFFYE.district, 'Huyện Quốc Oai');
+  assert.equal(payload.orders.CCCC3333.status, 'NEED_RETURN_TO_PARTNER_ASAP');
   assert.ok(!JSON.stringify(payload).includes('0900000002'));
   assert.deepEqual([...payload.config[1].khu_vuc], ['Huyện Thanh Trì', 'Huyện Sóc Sơn']);
 });
 
+test('stale partner_order_code values are not lookup keys', () => {
+  const { Lookup, index } = setup();
+  assert.equal(Lookup.resolveScan('GYE7R6DF', index).status, 'not_found');
+});
+
 test('server reports missing columns and sheets', () => {
-  assert.throws(() => loadServer({ data: [['x']], config: CONFIG }).getLookupData(), /thiếu cột partner_order_code/);
+  assert.throws(() => loadServer({ data: [['x']], config: CONFIG }).getLookupData(), /thiếu cột tracking_number/);
+  assert.throws(() => loadServer({ data: [['tracking_number', 'district']], config: CONFIG }).getLookupData(), /thiếu cột status/);
   assert.throws(() => loadServer({ config: CONFIG }).getLookupData(), /Không tìm thấy sheet "data"/);
 });
 
 test('doGet ?action=data returns JSON payload, errors as {error}', () => {
   const ok = loadServer({ data: DATA, config: CONFIG }).doGet({ parameter: { action: 'data' } });
   assert.equal(ok.mime, 'json');
-  assert.equal(JSON.parse(ok.text).orderCount, 4);
+  assert.equal(JSON.parse(ok.text).orderCount, 6);
   const bad = loadServer({ config: CONFIG }).doGet({ parameter: { action: 'data' } });
   assert.match(JSON.parse(bad.text).error, /Không tìm thấy sheet "data"/);
 });
 
 test('mapped district speaks ten_vi_tri + district', () => {
   const { Lookup, index } = setup();
-  const r = Lookup.resolveScan('GYE7H4UB', index);
+  const r = Lookup.resolveScan('GYEGFF9C', index);
   assert.equal(r.status, 'ok');
   assert.equal(r.speech, 'Khu vực 2, Huyện Thanh Trì');
 });
 
 test('scan is case/space insensitive', () => {
   const { Lookup, index } = setup();
-  assert.equal(Lookup.resolveScan('  gye7h4ub\n', index).status, 'ok');
+  assert.equal(Lookup.resolveScan('  gyegff9c\n', index).status, 'ok');
+});
+
+test('cancelled status speaks "Đơn đã huỷ" and skips location lookup', () => {
+  const { Lookup, index } = setup();
+  const r = Lookup.resolveScan('CCCC3333', index); // district is mapped, but cancel wins
+  assert.equal(r.status, 'cancelled');
+  assert.equal(r.speech, 'Đơn đã huỷ');
+  assert.equal(r.location, undefined);
+});
+
+test('cancelled status match ignores case and surrounding spaces', () => {
+  const { Lookup, index } = setup();
+  assert.equal(Lookup.resolveScan('DDDD4444', index).status, 'cancelled');
+});
+
+test('other statuses continue to normal lookup', () => {
+  const { Lookup } = setup();
+  for (const status of ['VERIFYING', '', 'RETURNED']) {
+    const index = Lookup.buildIndex({ orders: { X1: { district: 'Quận Hoàng Mai', status } }, config: [{ ten_vi_tri: 'Khu vực 1', khu_vuc: ['Quận Hoàng Mai'] }] });
+    assert.equal(Lookup.resolveScan('X1', index).speech, 'Khu vực 1, Quận Hoàng Mai');
+  }
 });
 
 test('district in a multi-district config cell matches the second entry', () => {
   const { Lookup } = setup();
-  const index = Lookup.buildIndex({ orders: { X1: 'Huyện Sóc Sơn' }, config: [{ ten_vi_tri: 'Khu vực 2', khu_vuc: ['Huyện Thanh Trì', 'Huyện Sóc Sơn'] }] });
+  const index = Lookup.buildIndex({ orders: { X1: { district: 'Huyện Sóc Sơn', status: 'VERIFYING' } }, config: [{ ten_vi_tri: 'Khu vực 2', khu_vuc: ['Huyện Thanh Trì', 'Huyện Sóc Sơn'] }] });
   assert.equal(Lookup.resolveScan('X1', index).speech, 'Khu vực 2, Huyện Sóc Sơn');
 });
 
@@ -102,7 +134,7 @@ test('tone-placement variants (Hoà vs Hòa) still match', () => {
 
 test('unmapped district speaks "Chưa có vị trí, <district>"', () => {
   const { Lookup, index } = setup();
-  const r = Lookup.resolveScan('GYE7Q9U3', index);
+  const r = Lookup.resolveScan('GYEGFFYE', index);
   assert.equal(r.status, 'unmapped');
   assert.equal(r.speech, 'Chưa có vị trí, Huyện Quốc Oai');
 });
@@ -121,8 +153,8 @@ test('unknown code (e.g. Shopee order number) speaks not found', () => {
 
 test('code embedded in a QR payload (URL / JSON) is found', () => {
   const { Lookup, index } = setup();
-  assert.equal(Lookup.resolveScan('https://ahamove.com/track?code=GYE7H4UB&x=1', index).code, 'GYE7H4UB');
-  assert.equal(Lookup.resolveScan('{"tracking":"GYE7H4UB"}', index).status, 'ok');
+  assert.equal(Lookup.resolveScan('https://ahamove.com/track?code=GYEGFF9C&x=1', index).code, 'GYEGFF9C');
+  assert.equal(Lookup.resolveScan('{"tracking":"GYEGFF9C"}', index).status, 'ok');
 });
 
 test('empty scan is ignored', () => {

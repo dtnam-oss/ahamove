@@ -17,7 +17,14 @@ var Lookup = (function () {
     return String(value == null ? '' : value).trim().toUpperCase();
   }
 
-  /** Build Maps from the server payload: code -> district, normalized district -> ten_vi_tri. */
+  /** Order statuses (sheet `data`, column `status`) that mean the order was cancelled. */
+  var CANCELLED_STATUSES = ['NEED_RETURN_TO_PARTNER_ASAP'];
+
+  function isCancelled(status) {
+    return CANCELLED_STATUSES.indexOf(normalizeCode(status)) >= 0;
+  }
+
+  /** Build Maps from the server payload: code -> {district, status}, normalized district -> ten_vi_tri. */
   function buildIndex(payload) {
     var orders = new Map();
     Object.keys(payload.orders || {}).forEach(function (code) {
@@ -45,13 +52,19 @@ var Lookup = (function () {
     return null;
   }
 
-  /** status: 'empty' | 'not_found' | 'no_district' | 'unmapped' | 'ok', plus the sentence to speak. */
+  /**
+   * status: 'empty' | 'not_found' | 'cancelled' | 'no_district' | 'unmapped' | 'ok', plus the sentence to speak.
+   * Cancelled orders stop here; otherwise district -> location lookup as usual.
+   */
   function resolveScan(raw, index) {
     if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
     var code = findCode(raw, index.orders);
     if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không tìm thấy đơn' };
 
-    var district = String(index.orders.get(code) || '').trim();
+    var order = index.orders.get(code) || {};
+    if (isCancelled(order.status)) return { status: 'cancelled', code: code, speech: 'Đơn đã huỷ' };
+
+    var district = String(order.district || '').trim();
     if (!district) return { status: 'no_district', code: code, speech: 'Đơn chưa có quận huyện' };
 
     var location = index.areas.get(normalizeText(district));
@@ -64,6 +77,7 @@ var Lookup = (function () {
   return {
     normalizeText: normalizeText,
     normalizeCode: normalizeCode,
+    isCancelled: isCancelled,
     buildIndex: buildIndex,
     findCode: findCode,
     resolveScan: resolveScan,

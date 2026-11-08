@@ -54,16 +54,22 @@ function readTable_(spreadsheet, name, requiredColumns) {
   return { col: col, rows: values.slice(1) };
 }
 
-/** Called from the client via google.script.run. */
+/** Build the lookup payload (served by doGet ?action=data). */
 function getLookupData() {
   const ss = SpreadsheetApp.openById(SHEET_ID);
-  const data = readTable_(ss, DATA_SHEET, ['partner_order_code', 'district']);
+  // tracking_number = "Mã vận đơn" printed on the waybill label.
+  const data = readTable_(ss, DATA_SHEET, ['tracking_number', 'status', 'district']);
   const conf = readTable_(ss, CONFIG_SHEET, ['ten_vi_tri', 'khu_vuc']);
 
+  // orders: code -> { district, status }. Status is passed raw; the client owns the cancel rule.
   const orders = {};
   data.rows.forEach(function (r) {
-    const code = String(r[data.col.partner_order_code]).trim().toUpperCase();
-    if (code) orders[code] = String(r[data.col.district]).trim();
+    const code = String(r[data.col.tracking_number]).trim().toUpperCase();
+    if (!code) return;
+    orders[code] = {
+      district: String(r[data.col.district]).trim(),
+      status: String(r[data.col.status]).trim(),
+    };
   });
 
   const config = [];

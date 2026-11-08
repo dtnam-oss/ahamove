@@ -11,19 +11,21 @@ Giao diện không chạy bên trong Apps Script vì iframe của Apps Script kh
 
 ## Luồng xử lý
 
-1. User quét **Mã vận đơn** (vd `GYE7Q9U3`) bằng súng barcode (PC/mobile) hoặc camera điện thoại (QR/barcode).
-2. Tra cột `partner_order_code` ở sheet `data` → lấy `district`.
-3. So `district` với cột `khu_vuc` ở sheet `config` (một ô có thể chứa nhiều quận, phân tách dấu phẩy).
-4. Đọc to và hiển thị kết quả:
+1. User quét **Mã vận đơn** (vd `GYEGFF9C`) bằng súng barcode (PC/mobile) hoặc camera điện thoại (QR/barcode).
+2. Tra cột `tracking_number` ở sheet `data`.
+3. Nếu cột `status` = `NEED_RETURN_TO_PARTNER_ASAP` → đọc "Đơn đã huỷ" và dừng (danh sách trạng thái huỷ: `CANCELLED_STATUSES` trong `web/lookup.js`).
+4. Ngược lại lấy `district`, so với cột `khu_vuc` ở sheet `config` (một ô có thể chứa nhiều quận, phân tách dấu phẩy).
+5. Đọc to và hiển thị kết quả:
 
 | Trường hợp | Giọng đọc |
 |---|---|
+| Đơn đã huỷ | "Đơn đã huỷ" |
 | Có vị trí | `<ten_vi_tri>, <district>` — vd "Khu vực 2, Huyện Thanh Trì" |
 | Quận chưa có trong config | "Chưa có vị trí, `<district>`" |
 | Đơn không có quận | "Đơn chưa có quận huyện" |
 | Mã không tồn tại | "Không tìm thấy đơn" |
 
-Dữ liệu được tải về trình duyệt một lần (chỉ mã → quận + config, không có tên/SĐT/địa chỉ), nên mỗi lần quét trả kết quả tức thì. Bấm **Tải lại** sau khi sửa sheet.
+Dữ liệu được tải về trình duyệt một lần (chỉ mã → quận + trạng thái, và config; không có tên/SĐT/địa chỉ), nên mỗi lần quét trả kết quả tức thì. Bấm **Tải lại** sau khi sửa sheet.
 
 ## Cách dùng
 
