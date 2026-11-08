@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <base target="_top" />
+  <meta charset="utf-8" />
+  <meta name="theme-color" content="#0f172a" />
+  <?!= include('styles'); ?>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+  <!-- Start gate: one tap unlocks speech on iOS/Safari and loads data. -->
+  <div id="start-gate" class="gate">
+    <div class="gate-card">
+      <h1>Chia chọn đơn</h1>
+      <p>Quét mã vận đơn bằng súng barcode hoặc camera điện thoại. Kết quả được đọc bằng giọng nói.</p>
+      <button id="start-btn" class="btn btn-primary btn-lg" type="button">Bắt đầu ca</button>
+    </div>
+  </div>
+
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <strong>Chia chọn đơn</strong>
+        <div id="data-status" class="muted">Chưa tải dữ liệu</div>
+      </div>
+      <button id="reload-btn" class="btn" type="button">Tải lại</button>
+    </header>
+
+    <div id="voice-warning" class="banner" hidden>
+      Thiết bị chưa có giọng đọc tiếng Việt. Kết quả vẫn hiển thị trên màn hình.
+    </div>
+
+    <form id="scan-form" class="scan-form" autocomplete="off">
+      <label for="scan-input" class="sr-only">Mã vận đơn</label>
+      <input id="scan-input" class="scan-input" type="text" enterkeyhint="go"
+             placeholder="Quét hoặc nhập mã vận đơn…" autocapitalize="characters" spellcheck="false" />
+      <button id="camera-btn" class="btn btn-icon" type="button" aria-label="Quét bằng camera">📷</button>
+    </form>
+
+    <!-- Fallback when live camera is blocked: take a photo with the native camera and decode it. -->
+    <label id="photo-label" class="btn btn-photo" hidden>
+      📸 Chụp ảnh mã vận đơn
+      <input id="photo-input" type="file" accept="image/*" capture="environment" hidden />
+    </label>
+
+    <div id="camera-box" class="camera-box" hidden>
+      <div id="camera-view"></div>
+      <button id="camera-close" class="btn" type="button">Đóng camera</button>
+    </div>
+    <div id="file-decoder" hidden></div>
+
+    <section id="result" class="result result-idle" aria-live="polite">
+      <div id="result-location" class="result-location">Sẵn sàng quét</div>
+      <div id="result-district" class="result-district"></div>
+      <div id="result-code" class="result-code"></div>
+    </section>
+  </main>
+
+  <?!= include('lookup'); ?>
+  <?!= include('scripts'); ?>
+</body>
+</html>

@@ -1,0 +1,4 @@
+node_modules/
+gas/config.js
+plans/
+.clasprc.json

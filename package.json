@@ -1,0 +1,13 @@
+{
+  "name": "ahamove-order-sorting",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Order sorting scanner (Google Apps Script web app): scan waybill code, look up district in Google Sheet, speak the sorting location.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}
