@@ -1,4 +1,3 @@
-<script>
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results.
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -61,23 +60,28 @@
   function loadData(done) {
     els.status.textContent = 'Đang tải dữ liệu…';
     els.reloadBtn.disabled = true;
-    google.script.run
-      .withSuccessHandler(function (body) {
+    // Simple GET (no custom headers) so the Apps Script redirect to googleusercontent passes CORS.
+    fetch(window.APP_CONFIG.apiUrl + '?action=data&t=' + Date.now())
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (body) {
+        if (body.error) throw new Error(body.error);
         index = Lookup.buildIndex(body);
         var time = new Date(body.updatedAt).toLocaleTimeString('vi-VN');
         els.status.textContent = body.orderCount + ' đơn · cập nhật ' + time;
-        els.reloadBtn.disabled = false;
-        if (done) done();
       })
-      .withFailureHandler(function (err) {
+      .catch(function (err) {
         var msg = (err && err.message) || String(err);
         els.status.textContent = 'Lỗi tải dữ liệu: ' + msg;
         showResult('error', 'Lỗi tải dữ liệu', msg);
         speak('Lỗi tải dữ liệu');
+      })
+      .then(function () {
         els.reloadBtn.disabled = false;
         if (done) done();
-      })
-      .getLookupData();
+      });
   }
 
   // ---------- Scan handling ----------
@@ -137,9 +141,11 @@
       function () { /* per-frame "not found" — ignore */ }
     ).catch(function (err) {
       closeCamera();
-      // Live camera may be blocked inside the Apps Script frame: offer photo capture instead.
+      // Permission denied or an in-app browser (Zalo/Facebook) without camera access: offer photo capture.
       els.photoLabel.hidden = false;
-      showResult('error', 'Không mở được camera trực tiếp', 'Dùng nút "Chụp ảnh mã vận đơn". ' + (err && err.message ? err.message : err));
+      showResult('error', 'Không mở được camera trực tiếp',
+        'Cho phép quyền camera (biểu tượng ổ khoá trên thanh địa chỉ), mở bằng Chrome/Safari, hoặc dùng nút "Chụp ảnh mã vận đơn". '
+        + (err && err.message ? err.message : err));
     });
   }
 
@@ -185,4 +191,3 @@
     if (speechSynthesis.addEventListener) speechSynthesis.addEventListener('voiceschanged', pickVoice);
   }
 })();
-</script>

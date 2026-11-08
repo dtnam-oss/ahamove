@@ -1,5 +1,4 @@
-<script>
-// Client-side lookup logic. Kept in its own file so Node tests can load it (test/lookup.test.js).
+// Client-side lookup logic. Plain script (global `Lookup`) so Node tests can load it in a VM (test/lookup.test.js).
 // Lookup runs in the browser so each scan answers instantly, without a server round-trip.
 var Lookup = (function () {
   /** Strip diacritics, lowercase, collapse spaces. Also absorbs tone-placement variants ("Hòa" vs "Hoà"). */
@@ -70,4 +69,3 @@ var Lookup = (function () {
     resolveScan: resolveScan,
   };
 })();
-</script>

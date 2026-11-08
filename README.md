@@ -1,6 +1,13 @@
 # Chia chọn đơn hàng (Ahamove)
 
-Web app Google Apps Script để chia chọn đơn: quét mã vận đơn → tra quận/huyện trong Google Sheet → đọc to vị trí kệ bằng giọng nói.
+Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong Google Sheet → đọc to vị trí kệ bằng giọng nói.
+
+**Mở công cụ:** https://dtnam-oss.github.io/ahamove/
+
+- Giao diện: trang tĩnh trên GitHub Pages (`web/`).
+- Backend: Google Apps Script web app (`gas/`), `GET ?action=data` trả JSON tối giản.
+
+Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
 ## Luồng xử lý
 
@@ -28,15 +35,17 @@ Dữ liệu được tải về trình duyệt một lần (chỉ mã → quận
 ## Cấu trúc
 
 ```
-gas/
-  appsscript.json     manifest (web app: chạy bằng quyền người deploy, truy cập ẩn danh)
-  Code.js             doGet + getLookupData (đọc sheet, trả payload tối giản)
+web/                  giao diện (GitHub Pages, deploy tự động khi push main)
+  index.html, style.css
+  config.js           URL API Apps Script (/exec)
+  lookup.js           logic tra cứu phía client (được test bằng Node)
+  app.js              điều khiển: tải dữ liệu, nhập liệu, camera, giọng nói
+gas/                  backend Apps Script
+  appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
+  Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
   config.example.js   mẫu config — copy thành config.js (git-ignored)
-  index.html          giao diện
-  styles.html         CSS
-  lookup.html         logic tra cứu phía client (được test bằng Node)
-  scripts.html        điều khiển: nhập liệu, camera, giọng nói
-test/lookup.test.js   test logic tra cứu + payload server
+test/lookup.test.js   test logic tra cứu + backend
+.github/workflows/pages.yml   test + deploy web/ lên GitHub Pages
 ```
 
 ## Phát triển & triển khai
@@ -47,9 +56,11 @@ Yêu cầu: Node ≥ 20, [`clasp`](https://github.com/google/clasp) đã đăng 
 cp gas/config.example.js gas/config.js   # điền SHEET_ID
 npm test                                 # chạy test
 clasp push --force                       # đẩy code lên Apps Script
-clasp update-deployment <DEPLOYMENT_ID>  # cập nhật web app, giữ nguyên URL
+clasp update-deployment <DEPLOYMENT_ID>  # cập nhật backend, giữ nguyên URL
 clasp list-deployments                   # xem DEPLOYMENT_ID
 ```
+
+Giao diện tự deploy khi push lên `main`. Đổi URL backend trong `web/config.js`.
 
 Lần deploy đầu, chủ script phải mở script editor, chạy hàm `getLookupData` một lần và cấp quyền đọc Google Sheets. Sau đó web app mới truy cập ẩn danh được.
 

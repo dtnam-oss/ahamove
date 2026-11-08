@@ -1,21 +1,42 @@
-// Server side of the order-sorting web app (Google Apps Script).
-// Serves the page and returns a minimal lookup payload: order code -> district + location config.
+// Backend of the order-sorting tool (Google Apps Script web app).
+// GET ?action=data returns a minimal lookup payload: order code -> district + location config.
 // Customer PII (name, phone, address) never leaves the sheet.
+//
+// The UI is hosted outside Apps Script (GitHub Pages, see web/) because the Apps Script
+// iframe does not grant the `camera` permission, so live camera scanning cannot work inside it.
 
 // SHEET_ID is defined in config.js (git-ignored, pushed by clasp). See config.example.js.
 const DATA_SHEET = 'data';
 const CONFIG_SHEET = 'config';
+const APP_URL = 'https://dtnam-oss.github.io/ahamove/';
 
-function doGet() {
-  return HtmlService.createTemplateFromFile('index')
-    .evaluate()
+function doGet(e) {
+  const action = e && e.parameter && e.parameter.action;
+  if (action === 'data') return jsonOutput_(safeLookupData_());
+
+  // Old links to this web app: point users to the hosted UI (top navigation needs a user click).
+  return HtmlService.createHtmlOutput(
+    '<div style="font-family:system-ui;text-align:center;padding:48px 16px">' +
+      '<h2>Chia chọn đơn đã chuyển sang địa chỉ mới</h2>' +
+      '<p><a href="' + APP_URL + '" target="_top" style="font-size:1.3rem">Mở công cụ chia chọn đơn</a></p>' +
+      '<p style="color:#666">' + APP_URL + '</p>' +
+    '</div>'
+  )
     .setTitle('Chia chọn đơn')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-/** Inline another project HTML file (styles/scripts) into the page template. */
-function include(name) {
-  return HtmlService.createHtmlOutputFromFile(name).getContent();
+function jsonOutput_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/** Errors are returned as {error} with HTTP 200 (ContentService cannot set status codes). */
+function safeLookupData_() {
+  try {
+    return getLookupData();
+  } catch (err) {
+    return { error: String((err && err.message) || err) };
+  }
 }
 
 /** Read a tab as display strings; returns column-index lookup + data rows. */

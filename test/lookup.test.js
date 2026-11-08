@@ -1,15 +1,15 @@
-// Tests for the client lookup (gas/lookup.html) and server payload builder (gas/Code.js).
-// Both GAS files are loaded into a Node VM so the deployed code is exactly what is tested.
+// Tests for the client lookup (web/lookup.js) and the Apps Script backend (gas/Code.js).
+// Both files are loaded into a Node VM so the deployed code is exactly what is tested.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const read = (p) => readFileSync(new URL(`../gas/${p}`, import.meta.url), 'utf8');
+const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
 function loadLookup() {
-  const src = read('lookup.html').replace(/<\/?script>/g, '');
+  const src = read('web/lookup.js');
   const ctx = vm.createContext({});
   vm.runInContext(`${src}\nthis.Lookup = Lookup;`, ctx);
   return ctx.Lookup;
@@ -21,9 +21,13 @@ function loadServer(tables) {
     getSheetByName: (name) =>
       tables[name] ? { getDataRange: () => ({ getDisplayValues: () => tables[name] }) } : null,
   };
-  const ctx = vm.createContext({ SpreadsheetApp: { openById: () => spreadsheet } });
-  vm.runInContext(read('config.example.js'), ctx);
-  vm.runInContext(read('Code.js'), ctx);
+  const ContentService = {
+    MimeType: { JSON: 'json' },
+    createTextOutput: (text) => ({ text, setMimeType(m) { this.mime = m; return this; } }),
+  };
+  const ctx = vm.createContext({ SpreadsheetApp: { openById: () => spreadsheet }, ContentService });
+  vm.runInContext(read('gas/config.example.js'), ctx);
+  vm.runInContext(read('gas/Code.js'), ctx);
   return ctx;
 }
 
@@ -61,6 +65,14 @@ test('server payload has only code -> district and parsed config (no PII)', () =
 test('server reports missing columns and sheets', () => {
   assert.throws(() => loadServer({ data: [['x']], config: CONFIG }).getLookupData(), /thiếu cột partner_order_code/);
   assert.throws(() => loadServer({ config: CONFIG }).getLookupData(), /Không tìm thấy sheet "data"/);
+});
+
+test('doGet ?action=data returns JSON payload, errors as {error}', () => {
+  const ok = loadServer({ data: DATA, config: CONFIG }).doGet({ parameter: { action: 'data' } });
+  assert.equal(ok.mime, 'json');
+  assert.equal(JSON.parse(ok.text).orderCount, 4);
+  const bad = loadServer({ config: CONFIG }).doGet({ parameter: { action: 'data' } });
+  assert.match(JSON.parse(bad.text).error, /Không tìm thấy sheet "data"/);
 });
 
 test('mapped district speaks ten_vi_tri + district', () => {
