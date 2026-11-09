@@ -71,6 +71,7 @@ html, body {
   align-items: center;
   gap: 8px 12px;
 }
+.write-panel .field { display: flex; flex-direction: column; gap: 4px; }
 .cell-input {
   width: 6.5em;
   font-size: 1.3rem;

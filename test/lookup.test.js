@@ -229,6 +229,17 @@ test('writeScan handles multi-letter columns', () => {
   assert.equal(sheet.cells[10][28], 'X1');
 });
 
+test('writeScan refuses a code already anywhere in the column, without writing', () => {
+  const sheet = fakeScanSheet({ C1: 'gyegff9c', C3: 'AAA1', D4: 'BBB2' });
+  const server = scanServer(sheet);
+  const dup = server.writeScan('C3', 'GYEGFF9C'); // above the start cell, different case
+  assert.deepEqual({ ...dup }, { ok: false, duplicate: true, cell: 'C1', code: 'GYEGFF9C' });
+  assert.equal(sheet.cells[4][3], undefined); // nothing written in C
+  assert.equal(server.writeScan('C3', 'BBB2').cell, 'C4'); // same value in another column is fine
+  assert.equal(server.writeScan('C3', 'BBB2').duplicate, true); // re-scan of what was just written
+  assert.equal(sheet.cells[5], undefined);
+});
+
 test('writeScan rejects bad cells, formula-like codes and a missing sheet', () => {
   const server = scanServer(fakeScanSheet());
   for (const cell of ['', 'C0', '3C', 'C3:C9', 'ABCD1']) assert.throws(() => server.writeScan(cell, 'X1'), /Ô không hợp lệ/);

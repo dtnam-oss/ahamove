@@ -36,11 +36,11 @@ Dữ liệu được tải về trình duyệt một lần (chỉ mã → quận
 
 ## Chế độ Ghi sheet
 
-Bấm **Ghi sheet**, nhập ô bắt đầu (vd `C3`), rồi quét như bình thường:
+Bấm **Ghi sheet**, nhập **Cột nhập** của bạn (bắt buộc, vd `C`) và **Từ dòng** (không bắt buộc, mặc định 1), rồi quét như bình thường. Chưa nhập cột thì không quét được ("Chưa nhập cột").
 
-- Mỗi lần quét ghi **mã vận đơn** vào sheet `data_don` (dạng text), lần sau ghi xuống dòng kế tiếp (C3 → C4 → C5…). Đọc to "Đã ghi ô C3".
-- Ô đã có dữ liệu thì tự nhảy xuống ô trống kế tiếp trong cùng cột — không bao giờ ghi đè, nhiều người ghi chung một cột vẫn an toàn.
-- Quét lại đúng mã vừa ghi (vd camera đọc lại nhãn) sẽ không ghi lần nữa: "Trùng mã vừa ghi".
+- Mỗi lần quét ghi **mã vận đơn** vào cột đó của sheet `data_don` (dạng text), lần sau ghi xuống dòng kế tiếp. Đọc to "Đã ghi ô C3".
+- Ô đã có dữ liệu thì tự nhảy xuống ô trống kế tiếp — không bao giờ ghi đè; nhiều người ghi chung một cột vẫn an toàn.
+- **Trùng mã:** nếu mã đã có ở bất kỳ ô nào trong cột đó → đọc "Trùng mã", không ghi, màn hình hiện ô đang chứa mã.
 - Chỉ nhận mã gồm chữ/số và `. _ -` (chặn chèn công thức). Ai có URL API đều ghi được vào `data_don`.
 
 ## Cấu trúc

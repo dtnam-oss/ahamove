@@ -21,7 +21,8 @@
     code: $('result-code'),
     modeBtns: document.querySelectorAll('.mode-btn'),
     writePanel: $('write-panel'),
-    startCell: $('start-cell'),
+    writeCol: $('write-col'),
+    writeRow: $('write-row'),
     nextCell: $('next-cell'),
   };
 
@@ -32,7 +33,6 @@
 
   var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don
   var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
-  var lastWritten = null; // {code, cell}
   var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
 
   // ---------- Speech ----------
@@ -118,7 +118,19 @@
   // ---------- Write mode (sheet data_don) ----------
   function setWriteCell(cell) {
     writeCell = cell;
-    els.nextCell.textContent = cell ? 'Lần quét tới ghi vào ô ' + cell : 'Nhập ô bắt đầu, ví dụ C3';
+    var col = (/^[A-Z]+/.exec(cell) || [''])[0];
+    els.nextCell.textContent = cell
+      ? 'Sheet data_don · lần quét tới ghi vào ô ' + cell + ' (ô đã có thì xuống ô trống kế tiếp) · kiểm tra trùng trên cả cột ' + col
+      : 'Nhập cột của bạn (ví dụ C) trước khi quét';
+  }
+
+  /** Column (required) + start row (default 1) -> start cell, e.g. "C" + "" -> "C1". */
+  function updateWriteCell() {
+    var col = els.writeCol.value.replace(/\s+/g, '').toUpperCase();
+    var row = els.writeRow.value.replace(/\s+/g, '') || '1';
+    var hasCol = /^[A-Z]{1,3}$/.test(col);
+    setWriteCell(hasCol ? Lookup.normalizeCell(col + row) : '');
+    if (hasCol && !writeCell) els.nextCell.textContent = 'Dòng bắt đầu không hợp lệ';
   }
 
   function queueWrite(raw) {
@@ -130,14 +142,9 @@
 
   function writeCode(code) {
     if (!writeCell) {
-      showResult('error', 'Chưa có ô bắt đầu', 'Nhập ô bắt đầu, ví dụ C3', code);
-      speak('Chưa nhập ô bắt đầu');
-      return;
-    }
-    // A label left under the camera is re-read every few seconds: never write it twice in a row.
-    if (lastWritten && lastWritten.code === code) {
-      showResult('unmapped', 'Trùng mã vừa ghi', 'Đã ghi ở ô ' + lastWritten.cell, code);
-      speak('Trùng mã vừa ghi');
+      var noCol = !els.writeCol.value.trim();
+      showResult('error', noCol ? 'Chưa nhập cột' : 'Cột/dòng không hợp lệ', els.nextCell.textContent, code);
+      speak(noCol ? 'Chưa nhập cột' : 'Cột không hợp lệ');
       return;
     }
     showResult('pending', 'Đang ghi…', 'Ô ' + writeCell, code);
@@ -153,7 +160,12 @@
       })
       .then(function (body) {
         if (body.error) throw new Error(body.error);
-        lastWritten = { code: body.code, cell: body.cell };
+        // The server refuses codes already present in the column (also catches camera re-reads).
+        if (body.duplicate) {
+          showResult('unmapped', 'Trùng mã', 'Đã có ở ô ' + body.cell + ' — không ghi', body.code);
+          speak('Trùng mã');
+          return;
+        }
         setWriteCell(Lookup.nextCell(body.cell));
         showResult('ok', 'Đã ghi ô ' + body.cell, 'Tiếp theo: ô ' + writeCell, body.code);
         speak('Đã ghi ô ' + body.cell);
@@ -171,20 +183,20 @@
     });
     els.writePanel.hidden = mode !== 'write';
     showResult('idle', 'Sẵn sàng quét', mode === 'write' ? 'Chế độ ghi sheet data_don' : '');
-    if (mode === 'write' && !writeCell) els.startCell.focus(); else focusInput();
+    if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
   }
 
   Array.prototype.forEach.call(els.modeBtns, function (b) {
     b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
   });
 
-  els.startCell.addEventListener('input', function () {
-    lastWritten = null;
-    setWriteCell(Lookup.normalizeCell(els.startCell.value));
+  [els.writeCol, els.writeRow].forEach(function (input) {
+    input.addEventListener('input', updateWriteCell);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); focusInput(); }
+    });
   });
-  els.startCell.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') { e.preventDefault(); focusInput(); }
-  });
+  updateWriteCell();
 
   function focusInput() {
     // Keep focus for the barcode gun, but not while the camera is open (avoids popping the mobile keyboard).

@@ -111,6 +111,8 @@ function doPost(e) {
  * Write a scanned code into `data_don` at `cell` (e.g. "C3"), or, when that cell is taken,
  * into the first empty cell below it in the same column. Never overwrites existing values,
  * so several scanners can share one column. Returns the cell actually written.
+ * If the code already exists anywhere in that column, nothing is written and
+ * {duplicate: true, cell: <existing cell>} is returned instead.
  */
 function writeScan(cell, code) {
   const ref = parseCell_(cell);
@@ -126,14 +128,16 @@ function writeScan(cell, code) {
     if (!sheet) throw new Error('Không tìm thấy sheet "' + SCAN_SHEET + '"');
     if (ref.col > sheet.getMaxColumns()) throw new Error('Ô ' + cell + ' nằm ngoài sheet "' + SCAN_SHEET + '"');
 
-    let row = ref.row;
+    // One read of the whole column serves both the duplicate check and the empty-cell search.
     const lastRow = sheet.getLastRow();
-    if (lastRow >= row) {
-      const values = sheet.getRange(row, ref.col, lastRow - row + 1, 1).getDisplayValues();
-      let i = 0;
-      while (i < values.length && String(values[i][0]).trim() !== '') i++;
-      row += i;
-    }
+    const column = lastRow > 0
+      ? sheet.getRange(1, ref.col, lastRow, 1).getDisplayValues().map(function (r) { return String(r[0]).trim(); })
+      : [];
+    const existing = column.findIndex(function (v) { return v.toUpperCase() === value; });
+    if (existing >= 0) return { ok: false, duplicate: true, cell: columnName_(ref.col) + (existing + 1), code: value };
+
+    let row = ref.row;
+    while (row <= column.length && column[row - 1] !== '') row++;
     const maxRows = sheet.getMaxRows();
     if (row > maxRows) sheet.insertRowsAfter(maxRows, row - maxRows);
 
