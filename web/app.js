@@ -1,4 +1,5 @@
-// Browser controller: data loading, barcode-gun input, camera scanning, spoken results.
+// Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
+// and "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan).
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var els = {
@@ -18,12 +19,21 @@
     location: $('result-location'),
     district: $('result-district'),
     code: $('result-code'),
+    modeBtns: document.querySelectorAll('.mode-btn'),
+    writePanel: $('write-panel'),
+    startCell: $('start-cell'),
+    nextCell: $('next-cell'),
   };
 
   var index = null;
   var scanner = null;
   var lastCamera = { text: '', at: 0 };
   var CAMERA_REPEAT_MS = 2500; // ignore the same code re-read by the live camera within this window
+
+  var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don
+  var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
+  var lastWritten = null; // {code, cell}
+  var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
 
   // ---------- Speech ----------
   var viVoice = null;
@@ -93,6 +103,7 @@
   }
 
   function handleScan(raw) {
+    if (mode === 'write') { queueWrite(raw); return; }
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     var r = Lookup.resolveScan(raw, index);
     if (r.status === 'empty') return;
@@ -103,6 +114,77 @@
     else showResult(r.status, 'Không tìm thấy đơn', '', r.input);
     speak(r.speech);
   }
+
+  // ---------- Write mode (sheet data_don) ----------
+  function setWriteCell(cell) {
+    writeCell = cell;
+    els.nextCell.textContent = cell ? 'Lần quét tới ghi vào ô ' + cell : 'Nhập ô bắt đầu, ví dụ C3';
+  }
+
+  function queueWrite(raw) {
+    if (!Lookup.normalizeCode(raw)) return;
+    // Prefer the known tracking number inside a QR payload (URL/JSON); otherwise write the scan as-is.
+    var code = (index && Lookup.findCode(raw, index.orders)) || Lookup.normalizeCode(raw);
+    writeQueue = writeQueue.then(function () { return writeCode(code); });
+  }
+
+  function writeCode(code) {
+    if (!writeCell) {
+      showResult('error', 'Chưa có ô bắt đầu', 'Nhập ô bắt đầu, ví dụ C3', code);
+      speak('Chưa nhập ô bắt đầu');
+      return;
+    }
+    // A label left under the camera is re-read every few seconds: never write it twice in a row.
+    if (lastWritten && lastWritten.code === code) {
+      showResult('unmapped', 'Trùng mã vừa ghi', 'Đã ghi ở ô ' + lastWritten.cell, code);
+      speak('Trùng mã vừa ghi');
+      return;
+    }
+    showResult('pending', 'Đang ghi…', 'Ô ' + writeCell, code);
+    // text/plain keeps this a CORS simple request (no preflight, which Apps Script cannot answer).
+    return fetch(window.APP_CONFIG.apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'write', cell: writeCell, code: code }),
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (body) {
+        if (body.error) throw new Error(body.error);
+        lastWritten = { code: body.code, cell: body.cell };
+        setWriteCell(Lookup.nextCell(body.cell));
+        showResult('ok', 'Đã ghi ô ' + body.cell, 'Tiếp theo: ô ' + writeCell, body.code);
+        speak('Đã ghi ô ' + body.cell);
+      })
+      .catch(function (err) {
+        showResult('error', 'Ghi thất bại', (err && err.message) || String(err), code);
+        speak('Ghi thất bại');
+      });
+  }
+
+  function setMode(next) {
+    mode = next;
+    Array.prototype.forEach.call(els.modeBtns, function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
+    });
+    els.writePanel.hidden = mode !== 'write';
+    showResult('idle', 'Sẵn sàng quét', mode === 'write' ? 'Chế độ ghi sheet data_don' : '');
+    if (mode === 'write' && !writeCell) els.startCell.focus(); else focusInput();
+  }
+
+  Array.prototype.forEach.call(els.modeBtns, function (b) {
+    b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
+  });
+
+  els.startCell.addEventListener('input', function () {
+    lastWritten = null;
+    setWriteCell(Lookup.normalizeCell(els.startCell.value));
+  });
+  els.startCell.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); focusInput(); }
+  });
 
   function focusInput() {
     // Keep focus for the barcode gun, but not while the camera is open (avoids popping the mobile keyboard).

@@ -59,6 +59,31 @@ html, body {
   font-size: 0.9rem;
 }
 
+.mode-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mode-btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
+
+.write-panel {
+  background: var(--panel);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.cell-input {
+  width: 6.5em;
+  font-size: 1.3rem;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 2px solid #334155;
+  background: #020617;
+  color: var(--text);
+  text-transform: uppercase;
+}
+.cell-input:focus { outline: none; border-color: var(--primary); }
+#next-cell { flex-basis: 100%; }
+
 .scan-form { display: flex; gap: 8px; }
 .scan-input {
   flex: 1;
@@ -97,6 +122,7 @@ html, body {
 
 .result-ok { background: #052e16; border-color: var(--ok); }
 .result-unmapped, .result-no_district { background: #431407; border-color: var(--warn); }
+.result-pending { border-color: var(--primary); }
 .result-not_found, .result-error, .result-cancelled { background: #450a0a; border-color: var(--error); }
 
 .gate {

@@ -15,17 +15,21 @@ function loadLookup() {
   return ctx.Lookup;
 }
 
-/** Fake SpreadsheetApp returning given 2D display values per sheet name. */
+/** Fake SpreadsheetApp returning given 2D display values per sheet name (or a fake sheet object). */
 function loadServer(tables) {
   const spreadsheet = {
-    getSheetByName: (name) =>
-      tables[name] ? { getDataRange: () => ({ getDisplayValues: () => tables[name] }) } : null,
+    getSheetByName: (name) => {
+      const t = tables[name];
+      if (!t) return null;
+      return Array.isArray(t) ? { getDataRange: () => ({ getDisplayValues: () => t }) } : t;
+    },
   };
   const ContentService = {
     MimeType: { JSON: 'json' },
     createTextOutput: (text) => ({ text, setMimeType(m) { this.mime = m; return this; } }),
   };
-  const ctx = vm.createContext({ SpreadsheetApp: { openById: () => spreadsheet }, ContentService });
+  const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
+  const ctx = vm.createContext({ SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService });
   vm.runInContext(read('gas/config.example.js'), ctx);
   vm.runInContext(read('gas/Code.js'), ctx);
   return ctx;
@@ -160,4 +164,93 @@ test('code embedded in a QR payload (URL / JSON) is found', () => {
 test('empty scan is ignored', () => {
   const { Lookup, index } = setup();
   assert.equal(Lookup.resolveScan('   ', index).status, 'empty');
+});
+
+// ---------- Write mode: sheet data_don ----------
+
+/** In-memory sheet: cells[row][col] (1-based), sized maxRows x maxCols, recording formats. */
+function fakeScanSheet(filled = {}, maxRows = 1000, maxCols = 26) {
+  const cells = {};
+  const formats = {};
+  for (const [a1, v] of Object.entries(filled)) {
+    const m = /^([A-Z])(\d+)$/.exec(a1);
+    (cells[Number(m[2])] ||= {})[m[1].charCodeAt(0) - 64] = v;
+  }
+  const get = (r, c) => (cells[r] && cells[r][c]) || '';
+  const sheet = {
+    cells,
+    formats,
+    getLastRow: () => Math.max(0, ...Object.keys(cells).map(Number).filter((r) => Object.values(cells[r]).some(Boolean))),
+    getMaxRows: () => maxRows,
+    getMaxColumns: () => maxCols,
+    insertRowsAfter: (after, n) => { maxRows += n; },
+    getRange: (row, col, numRows = 1) => {
+      if (row + numRows - 1 > maxRows || col > maxCols) throw new Error('out of bounds');
+      return {
+        getDisplayValues: () => Array.from({ length: numRows }, (_, i) => [get(row + i, col)]),
+        setNumberFormat(f) { formats[`${row},${col}`] = f; return this; },
+        setValue(v) { (cells[row] ||= {})[col] = v; return this; },
+      };
+    },
+  };
+  return sheet;
+}
+
+function scanServer(sheet) {
+  return loadServer({ data: DATA, config: CONFIG, data_don: sheet });
+}
+
+test('writeScan writes the code as text at the chosen cell', () => {
+  const sheet = fakeScanSheet();
+  const r = scanServer(sheet).writeScan('c3', ' gyegff9c ');
+  assert.deepEqual({ ...r }, { ok: true, cell: 'C3', code: 'GYEGFF9C' });
+  assert.equal(sheet.cells[3][3], 'GYEGFF9C');
+  assert.equal(sheet.formats['3,3'], '@');
+});
+
+test('writeScan skips taken cells and never overwrites', () => {
+  const sheet = fakeScanSheet({ C3: 'AAA1', C4: 'AAA2', C6: 'AAA4', D5: 'other column' });
+  const server = scanServer(sheet);
+  assert.equal(server.writeScan('C3', 'NEW1').cell, 'C5');
+  assert.equal(server.writeScan('C3', 'NEW2').cell, 'C7');
+  assert.equal(sheet.cells[3][3], 'AAA1');
+  assert.equal(sheet.cells[6][3], 'AAA4');
+});
+
+test('writeScan grows the sheet when the column is full to the last row', () => {
+  const sheet = fakeScanSheet({ A1: 'X', A2: 'Y' }, 2);
+  assert.equal(scanServer(sheet).writeScan('A1', 'Z1').cell, 'A3');
+  assert.equal(sheet.cells[3][1], 'Z1');
+});
+
+test('writeScan handles multi-letter columns', () => {
+  const sheet = fakeScanSheet({}, 1000, 30);
+  assert.equal(scanServer(sheet).writeScan('AB10', 'X1').cell, 'AB10');
+  assert.equal(sheet.cells[10][28], 'X1');
+});
+
+test('writeScan rejects bad cells, formula-like codes and a missing sheet', () => {
+  const server = scanServer(fakeScanSheet());
+  for (const cell of ['', 'C0', '3C', 'C3:C9', 'ABCD1']) assert.throws(() => server.writeScan(cell, 'X1'), /Ô không hợp lệ/);
+  for (const code of ['', '=HYPERLINK("x")', '+1', '@A', 'https://x.y/z']) assert.throws(() => server.writeScan('C3', code), /Mã không hợp lệ/);
+  assert.throws(() => scanServer(fakeScanSheet({}, 1000, 3)).writeScan('D1', 'X1'), /nằm ngoài sheet/);
+  assert.throws(() => loadServer({ data: DATA, config: CONFIG }).writeScan('C3', 'X1'), /Không tìm thấy sheet "data_don"/);
+});
+
+test('doPost {action:write} returns the written cell, errors as {error}', () => {
+  const server = scanServer(fakeScanSheet({ C3: 'TAKEN' }));
+  const post = (body) => JSON.parse(server.doPost({ postData: { contents: body } }).text);
+  assert.equal(post(JSON.stringify({ action: 'write', cell: 'C3', code: 'GYEGFF9C' })).cell, 'C4');
+  assert.match(post(JSON.stringify({ action: 'delete' })).error, /Thao tác không hợp lệ/);
+  assert.ok(post('not json').error);
+});
+
+test('client cell helpers: normalizeCell / nextCell', () => {
+  const Lookup = loadLookup();
+  assert.equal(Lookup.normalizeCell(' c 3 '), 'C3');
+  assert.equal(Lookup.normalizeCell('C0'), '');
+  assert.equal(Lookup.normalizeCell('C3:C4'), '');
+  assert.equal(Lookup.nextCell('C3'), 'C4');
+  assert.equal(Lookup.nextCell('ab99'), 'AB100');
+  assert.equal(Lookup.nextCell('bad'), '');
 });

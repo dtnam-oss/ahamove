@@ -74,6 +74,18 @@ var Lookup = (function () {
     return { status: 'ok', code: code, district: district, location: location, speech: location + ', ' + district };
   }
 
+  /** " c3 " -> "C3"; anything that is not a single A1 cell -> "". */
+  function normalizeCell(value) {
+    var cell = String(value == null ? '' : value).replace(/\s+/g, '').toUpperCase();
+    return /^[A-Z]{1,3}[1-9]\d{0,6}$/.test(cell) ? cell : '';
+  }
+
+  /** "C3" -> "C4": the cell right below. */
+  function nextCell(cell) {
+    var m = /^([A-Z]+)(\d+)$/.exec(normalizeCell(cell));
+    return m ? m[1] + (Number(m[2]) + 1) : '';
+  }
+
   return {
     normalizeText: normalizeText,
     normalizeCode: normalizeCode,
@@ -81,5 +93,7 @@ var Lookup = (function () {
     buildIndex: buildIndex,
     findCode: findCode,
     resolveScan: resolveScan,
+    normalizeCell: normalizeCell,
+    nextCell: nextCell,
   };
 })();

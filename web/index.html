@@ -32,6 +32,19 @@
       Thiết bị chưa có giọng đọc tiếng Việt. Kết quả vẫn hiển thị trên màn hình.
     </div>
 
+    <div class="mode-bar" role="group" aria-label="Chế độ">
+      <button type="button" class="btn mode-btn" data-mode="sort" aria-pressed="true">Chia chọn</button>
+      <button type="button" class="btn mode-btn" data-mode="write" aria-pressed="false">Ghi sheet</button>
+    </div>
+
+    <!-- Write mode: each scan is written to sheet data_don, starting at this cell and moving down. -->
+    <div id="write-panel" class="write-panel" hidden>
+      <label for="start-cell">Ghi mã vào sheet <b>data_don</b> từ ô</label>
+      <input id="start-cell" class="cell-input" type="text" placeholder="C3" maxlength="10"
+             autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="done" />
+      <div id="next-cell" class="muted">Nhập ô bắt đầu, ví dụ C3</div>
+    </div>
+
     <form id="scan-form" class="scan-form" autocomplete="off">
       <label for="scan-input" class="sr-only">Mã vận đơn</label>
       <input id="scan-input" class="scan-input" type="text" enterkeyhint="go"
