@@ -5,7 +5,7 @@ Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong
 **Mở công cụ:** https://dtnam-oss.github.io/ahamove/
 
 - Giao diện: trang tĩnh trên GitHub Pages (`web/`).
-- Backend: Google Apps Script web app (`gas/`), `GET ?action=data` trả JSON tối giản.
+- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `POST {action:'write'}` ghi mã vào sheet `data_don`.
 
 Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
@@ -34,6 +34,15 @@ Dữ liệu được tải về trình duyệt một lần (chỉ mã → quận
 - **Camera:** bấm 📷. Nếu trình duyệt chặn camera trực tiếp, dùng nút **Chụp ảnh mã vận đơn**.
 - So khớp không phân biệt hoa/thường, khoảng trắng, dấu tiếng Việt (`Hòa` = `Hoà`). Nếu QR chứa URL/chuỗi dài, mã vận đơn bên trong vẫn được nhận.
 
+## Chế độ Ghi sheet
+
+Bấm **Ghi sheet**, nhập ô bắt đầu (vd `C3`), rồi quét như bình thường:
+
+- Mỗi lần quét ghi **mã vận đơn** vào sheet `data_don` (dạng text), lần sau ghi xuống dòng kế tiếp (C3 → C4 → C5…). Đọc to "Đã ghi ô C3".
+- Ô đã có dữ liệu thì tự nhảy xuống ô trống kế tiếp trong cùng cột — không bao giờ ghi đè, nhiều người ghi chung một cột vẫn an toàn.
+- Quét lại đúng mã vừa ghi (vd camera đọc lại nhãn) sẽ không ghi lần nữa: "Trùng mã vừa ghi".
+- Chỉ nhận mã gồm chữ/số và `. _ -` (chặn chèn công thức). Ai có URL API đều ghi được vào `data_don`.
+
 ## Cấu trúc
 
 ```
@@ -45,6 +54,7 @@ web/                  giao diện (GitHub Pages, deploy tự động khi push ma
 gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
   Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
+                      doPost: ghi mã vào data_don (writeScan)
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages
