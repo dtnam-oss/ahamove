@@ -44,21 +44,31 @@ var Lookup = (function () {
         backlog.set(normalizeCode(code), payload.backlog[code]);
       });
     }
-    var routes = null;
+    var routes = null; // ward key -> ten_tuyen
+    var routeRows = []; // config_tuyen rows actually used (first row per ward)
     var routePoints = new Map(); // ten_tuyen -> ward points of that route, for the map
+    var orderRoute = new Map(); // order code -> ten_tuyen of its ward
     if (payload.routes) {
       routes = new Map();
       payload.routes.forEach(function (row) {
         var key = wardKey(row.phuong_xa, row.quan_huyen);
         if (routes.has(key)) return; // first config row wins
         routes.set(key, row.ten_tuyen);
+        routeRows.push(row);
         if (isFinite(row.lat) && isFinite(row.lng) && row.lat !== null && row.lng !== null) {
           if (!routePoints.has(row.ten_tuyen)) routePoints.set(row.ten_tuyen, []);
           routePoints.get(row.ten_tuyen).push({ phuong_xa: row.phuong_xa, lat: Number(row.lat), lng: Number(row.lng) });
         }
       });
+      orders.forEach(function (order, code) {
+        var route = routes.get(wardKey(order.ward, order.district));
+        if (route) orderRoute.set(code, route);
+      });
     }
-    return { orders: orders, areas: areas, backlog: backlog, routes: routes, routePoints: routePoints };
+    return {
+      orders: orders, areas: areas, backlog: backlog,
+      routes: routes, routeRows: routeRows, routePoints: routePoints, orderRoute: orderRoute,
+    };
   }
 
   /** Ward + district identify a ward (the same ward name exists in several districts). */
@@ -115,28 +125,68 @@ var Lookup = (function () {
     return { status: overdue ? 'overdue' : 'ok', code: code, days: days, speech: days + ' ngày' };
   }
 
+  /** "Tuyến 2" before "Tuyến 10": compare by the trailing number, then by text. */
+  function compareRouteNames(a, b) {
+    var na = Number((/(\d+)\s*$/.exec(a) || [])[1]);
+    var nb = Number((/(\d+)\s*$/.exec(b) || [])[1]);
+    if (isFinite(na) && isFinite(nb) && na !== nb) return na - nb;
+    return a < b ? -1 : a > b ? 1 : 0;
+  }
+
   /**
-   * Route mode (sheet config_tuyen): speak "<ten_tuyen>, <phường/xã>", e.g. "Tuyến 3, Xã Đại Đồng".
-   * status: 'empty' | 'unavailable' | 'not_found' | 'cancelled' | 'no_ward' | 'unmapped' | 'ok'.
+   * Routes for the picker: [{name, total, districts: [{name, total, wards: [{name, total}]}]}].
+   * Totals count today's orders in raw_data (cancelled ones excluded); wards keep config order.
    */
-  function resolveRoute(raw, index) {
+  function routeSummary(index) {
+    if (!index.routes) return [];
+    var counts = new Map(); // ward key -> active orders
+    index.orders.forEach(function (order, code) {
+      if (isCancelled(order.status) || !index.orderRoute.has(code)) return;
+      var key = wardKey(order.ward, order.district);
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    var byName = new Map();
+    index.routeRows.forEach(function (row) {
+      if (!byName.has(row.ten_tuyen)) byName.set(row.ten_tuyen, { name: row.ten_tuyen, total: 0, districts: new Map() });
+      var route = byName.get(row.ten_tuyen);
+      if (!route.districts.has(row.quan_huyen)) route.districts.set(row.quan_huyen, { name: row.quan_huyen, total: 0, wards: [] });
+      var district = route.districts.get(row.quan_huyen);
+      var n = counts.get(wardKey(row.phuong_xa, row.quan_huyen)) || 0;
+      district.wards.push({ name: row.phuong_xa, total: n });
+      district.total += n;
+      route.total += n;
+    });
+    return Array.from(byName.values())
+      .sort(function (a, b) { return compareRouteNames(a.name, b.name); })
+      .map(function (r) { return { name: r.name, total: r.total, districts: Array.from(r.districts.values()) }; });
+  }
+
+  /** Codes of today's active (not cancelled) orders that belong to the given routes. */
+  function routeOrderCodes(routeNames, index) {
+    var codes = [];
+    index.orderRoute.forEach(function (route, code) {
+      if (routeNames.indexOf(route) >= 0 && !isCancelled((index.orders.get(code) || {}).status)) codes.push(code);
+    });
+    return codes;
+  }
+
+  /**
+   * Loading check for the selected routes (scanned = {code: truthy} of orders already counted).
+   * status: 'empty' | 'unavailable' | 'not_found' | 'cancelled' | 'other_route' | 'duplicate' | 'ok'.
+   */
+  function resolveRouteCheck(raw, index, selected, scanned) {
     if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
     if (!index.routes) return { status: 'unavailable', speech: 'Chưa có cấu hình tuyến' };
     var code = findCode(raw, index.orders);
     if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không tìm thấy đơn' };
-
     var order = index.orders.get(code) || {};
     if (isCancelled(order.status)) return { status: 'cancelled', code: code, speech: 'Đơn đã huỷ' };
-
-    var ward = String(order.ward || '').trim();
-    var district = String(order.district || '').trim();
-    if (!ward) return { status: 'no_ward', code: code, district: district, speech: 'Chưa rõ phường xã' };
-
-    var route = index.routes.get(wardKey(ward, district));
-    if (!route) {
-      return { status: 'unmapped', code: code, ward: ward, district: district, speech: 'Chưa có tuyến, ' + ward };
+    var route = index.orderRoute.get(code) || '';
+    if (selected.indexOf(route) < 0) {
+      return { status: 'other_route', code: code, route: route, speech: route ? 'Không, ' + route : 'Không, đơn chưa có tuyến' };
     }
-    return { status: 'ok', code: code, ward: ward, district: district, route: route, speech: route + ', ' + ward };
+    if (scanned[code]) return { status: 'duplicate', code: code, route: route, speech: 'Đã quét' };
+    return { status: 'ok', code: code, route: route, ward: order.ward || '', district: order.district || '', speech: 'Có' };
   }
 
   /** Ward points of a route (for the map); [] when unknown. */
@@ -164,7 +214,9 @@ var Lookup = (function () {
     findCode: findCode,
     resolveScan: resolveScan,
     resolveBacklog: resolveBacklog,
-    resolveRoute: resolveRoute,
+    routeSummary: routeSummary,
+    routeOrderCodes: routeOrderCodes,
+    resolveRouteCheck: resolveRouteCheck,
     routeWardPoints: routeWardPoints,
     normalizeCell: normalizeCell,
     nextCell: nextCell,

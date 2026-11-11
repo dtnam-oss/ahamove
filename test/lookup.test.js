@@ -418,35 +418,74 @@ test('missing config_tuyen does not break the other modes', () => {
   assert.match(payload.routesError, /Không tìm thấy sheet "config_tuyen"/);
   assert.equal(payload.orderCount, 6);
   const Lookup = loadLookup();
-  assert.equal(Lookup.resolveRoute('GYEGFF9C', Lookup.buildIndex(payload)).status, 'unavailable');
+  const index = Lookup.buildIndex(payload);
+  assert.equal(Lookup.resolveRouteCheck('GYEGFF9C', index, ['Tuyến 1'], {}).status, 'unavailable');
+  assert.equal(Lookup.routeSummary(index).length, 0);
 });
 
-test('route scan speaks "<tuyến>, <phường/xã>"', () => {
-  const { Lookup, index } = routeSetup();
-  const r = Lookup.resolveRoute(' gyegff9c ', index);
-  assert.equal(r.status, 'ok');
-  assert.equal(r.speech, 'Tuyến 1, Xã Tả Thanh Oai');
-  assert.equal(Lookup.resolveRoute('https://x.vn/t?code=GYEGFFYE', index).speech, 'Tuyến 2, Xã Liệp Nghĩa');
+// Orders for the route picker: Tuyến 1 = Tả Thanh Oai + Vĩnh Quỳnh (Thanh Trì), Tuyến 2 = Liệp Nghĩa,
+// Tuyến 10 has no order today. One cancelled order sits in Tuyến 1 and must not count.
+const PICK_DATA = [
+  ['date', 'tracking_number', 'partner', 'status', 'district', 'dropoff'],
+  ['d', 'T1A', 'ghn', 'ASSIGNING', 'Huyện Thanh Trì', 'Số 1, Xã Tả Thanh Oai, Huyện Thanh Trì, Hà Nội'],
+  ['d', 'T1B', 'ghn', 'ASSIGNING', 'Huyện Thanh Trì', 'Số 2, xã tả thanh oai, Huyện Thanh Trì, Hà Nội'],
+  ['d', 'T1C', 'ghn', 'ASSIGNING', 'Huyện Thanh Trì', 'Số 3, Xã Vĩnh Quỳnh, Huyện Thanh Trì, Hà Nội'],
+  ['d', 'T1X', 'ghn', 'NEED_RETURN_TO_PARTNER_ASAP', 'Huyện Thanh Trì', 'Số 4, Xã Vĩnh Quỳnh, Huyện Thanh Trì, Hà Nội'],
+  ['d', 'T2A', 'ghn', 'ASSIGNING', 'Huyện Quốc Oai', 'Số 5, Xã Liệp Nghĩa, Huyện Quốc Oai, Hà Nội'],
+  ['d', 'NOR', 'ghn', 'ASSIGNING', 'Huyện Ba Vì', 'Số 6, Xã Ba Trại, Huyện Ba Vì, Hà Nội'],
+];
+const PICK_ROUTES = [
+  ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_don'],
+  ['Tuyến 10', 'Xã Ba Vì', 'Huyện Ba Vì', '21,1', '105,4', '0'],
+  ['Tuyến 2', 'Xã Liệp Nghĩa', 'Huyện Quốc Oai', '20,98', '105,62', '1'],
+  ['Tuyến 1', 'Xã Tả Thanh Oai', 'Huyện Thanh Trì', '20,93', '105,8', '2'],
+  ['Tuyến 1', 'Xã Vĩnh Quỳnh', 'Huyện Thanh Trì', '20,95', '105,81', '2'],
+  ['Tuyến 1', 'Phường Định Công', 'Quận Hoàng Mai', '20,98', '105,83', '0'],
+];
+function pickSetup() {
+  const payload = loadServer({ raw_data: PICK_DATA, config: CONFIG, config_tuyen: PICK_ROUTES }).getLookupData();
+  const Lookup = loadLookup();
+  return { Lookup, index: Lookup.buildIndex(payload) };
+}
+
+test('routeSummary: routes in number order, districts with ward details, today\'s active orders', () => {
+  const { Lookup, index } = pickSetup();
+  const list = JSON.parse(JSON.stringify(Lookup.routeSummary(index)));
+  assert.deepEqual(list.map((r) => [r.name, r.total]), [['Tuyến 1', 3], ['Tuyến 2', 1], ['Tuyến 10', 0]]);
+  assert.deepEqual(list[0].districts, [
+    { name: 'Huyện Thanh Trì', total: 3, wards: [{ name: 'Xã Tả Thanh Oai', total: 2 }, { name: 'Xã Vĩnh Quỳnh', total: 1 }] },
+    { name: 'Quận Hoàng Mai', total: 0, wards: [{ name: 'Phường Định Công', total: 0 }] },
+  ]);
 });
 
-test('route scan: tone/case variants of the ward still match', () => {
+test('routeOrderCodes: active orders of the selected routes only', () => {
+  const { Lookup, index } = pickSetup();
+  assert.deepEqual([...Lookup.routeOrderCodes(['Tuyến 1'], index)].sort(), ['T1A', 'T1B', 'T1C']);
+  assert.deepEqual([...Lookup.routeOrderCodes(['Tuyến 1', 'Tuyến 2'], index)].sort(), ['T1A', 'T1B', 'T1C', 'T2A']);
+  assert.equal(Lookup.routeOrderCodes([], index).length, 0);
+});
+
+test('resolveRouteCheck: "Có" for the selection, then "Đã quét"; other routes say which one', () => {
+  const { Lookup, index } = pickSetup();
+  const scanned = {};
+  const ok = Lookup.resolveRouteCheck(' t1a ', index, ['Tuyến 1'], scanned);
+  assert.deepEqual([ok.status, ok.speech, ok.route, ok.ward], ['ok', 'Có', 'Tuyến 1', 'Xã Tả Thanh Oai']);
+  scanned.T1A = 1;
+  assert.equal(Lookup.resolveRouteCheck('T1A', index, ['Tuyến 1'], scanned).speech, 'Đã quét');
+  assert.equal(Lookup.resolveRouteCheck('https://x.vn/t?code=T2A', index, ['Tuyến 1'], scanned).speech, 'Không, Tuyến 2');
+  assert.equal(Lookup.resolveRouteCheck('NOR', index, ['Tuyến 1'], scanned).speech, 'Không, đơn chưa có tuyến');
+  assert.equal(Lookup.resolveRouteCheck('T1X', index, ['Tuyến 1'], scanned).speech, 'Đơn đã huỷ');
+  assert.equal(Lookup.resolveRouteCheck('ZZZZ', index, ['Tuyến 1'], scanned).speech, 'Không tìm thấy đơn');
+  assert.equal(Lookup.resolveRouteCheck('  ', index, ['Tuyến 1'], scanned).status, 'empty');
+  assert.equal(Lookup.resolveRouteCheck('T2A', index, ['Tuyến 1', 'Tuyến 2'], scanned).status, 'ok');
+});
+
+test('route membership tolerates tone/case variants of ward and district', () => {
   const rows = ROUTES.map((r) => r.slice());
   rows[1][1] = 'xã tả thanh oai';
   rows[1][2] = 'HUYỆN THANH TRÌ';
   const { Lookup, index } = routeSetup(rows);
-  assert.equal(Lookup.resolveRoute('GYEGFF9C', index).route, 'Tuyến 1');
-});
-
-test('route scan: not found, cancelled, no ward, ward without route', () => {
-  const { Lookup, index } = routeSetup();
-  assert.equal(Lookup.resolveRoute('ZZZZ9999', index).speech, 'Không tìm thấy đơn');
-  assert.equal(Lookup.resolveRoute('CCCC3333', index).speech, 'Đơn đã huỷ');
-  assert.equal(Lookup.resolveRoute('AAAA1111', index).status, 'no_ward');
-  const { Lookup: L2, index: i2 } = routeSetup(ROUTES.slice(0, 2)); // only Tuyến 1 configured
-  const r = L2.resolveRoute('GYEGFFYE', i2);
-  assert.equal(r.status, 'unmapped');
-  assert.equal(r.speech, 'Chưa có tuyến, Xã Liệp Nghĩa');
-  assert.equal(Lookup.resolveRoute(' ', index).status, 'empty');
+  assert.equal(Lookup.resolveRouteCheck('GYEGFF9C', index, ['Tuyến 1'], {}).status, 'ok');
 });
 
 // Points along a line of latitude (0.009 deg lat ~ 1 km).

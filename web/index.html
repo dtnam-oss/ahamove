@@ -55,6 +55,25 @@
       <div id="next-cell" class="muted"></div>
     </div>
 
+    <!-- Tuyến mode, step 1: pick the routes to load (districts expand to their wards). -->
+    <section id="route-picker" class="route-picker" hidden>
+      <div class="route-picker-head">Chọn tuyến xuất hàng</div>
+      <div id="route-list" class="route-list"></div>
+      <button id="route-start" class="btn btn-primary btn-lg" type="button" disabled>Chọn tuyến để bắt đầu</button>
+    </section>
+
+    <!-- Tuyến mode, step 2: loading progress of the selected routes (kept on this device). -->
+    <div id="route-progress" class="route-progress" hidden>
+      <div class="route-progress-info">
+        <div id="route-names" class="muted"></div>
+        <div id="route-count" class="route-count">0/0</div>
+      </div>
+      <div class="route-actions">
+        <button id="route-change" class="btn" type="button">Đổi tuyến</button>
+        <button id="route-reset" class="btn" type="button">Làm lại</button>
+      </div>
+    </div>
+
     <form id="scan-form" class="scan-form" autocomplete="off">
       <label for="scan-input" class="sr-only">Mã vận đơn</label>
       <input id="scan-input" class="scan-input" type="text" enterkeyhint="go"
@@ -80,7 +99,7 @@
       <div id="result-code" class="result-code"></div>
     </section>
 
-    <!-- Tuyến mode: the scanned order and its route's wards on a Goong map (see order-map.js). -->
+    <!-- Tuyến mode: wards of the selected routes and the scanned orders on a Goong map (order-map.js). -->
     <section id="map-box" class="map-box" hidden>
       <div id="map-note" class="muted"></div>
       <div id="order-map" class="order-map"></div>

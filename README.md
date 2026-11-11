@@ -58,7 +58,20 @@ Bấm **Backlog** rồi quét: tra mã trong sheet `back_log`, cột **"Còn l�
 
 ## Chế độ Tuyến (chia tuyến theo phường/xã)
 
-Bấm **Tuyến** rồi quét: lấy phường/xã trong địa chỉ (cột `dropoff` của `raw_data`), tra sheet `config_tuyen` và đọc to `<tuyến>, <phường/xã>` (vd "Tuyến 3, Xã Đại Đồng").
+Bấm **Tuyến** để kiểm hàng lên xe theo tuyến:
+
+1. **Chọn tuyến:** danh sách tuyến kèm số đơn hôm nay (đơn trong `raw_data`, không tính đơn huỷ) và các quận/huyện; bấm vào quận để xem từng phường/xã. Tick các tuyến cần xuất → **Bắt đầu quét**.
+2. **Quét:** bộ đếm `đã quét/tổng` của các tuyến đã chọn. Đơn được xếp vào tuyến theo phường/xã trong địa chỉ (cột `dropoff`) tra trong sheet `config_tuyen`.
+
+| Trường hợp | Màn hình | Giọng đọc |
+|---|---|---|
+| Đơn thuộc tuyến đã chọn | xanh, tăng bộ đếm | "Có" (đơn cuối: "Có, đủ đơn") |
+| Đơn đã quét rồi | cam | "Đã quét" |
+| Đơn thuộc tuyến khác | đỏ | "Không, Tuyến 5" |
+| Xã của đơn chưa có tuyến | đỏ | "Không, đơn chưa có tuyến" → chạy `boSungTuyen` |
+| Đơn huỷ / không có | đỏ | "Đơn đã huỷ" / "Không tìm thấy đơn" |
+
+Tiến độ lưu trên máy đang quét (tải lại trang vẫn còn, tự xoá khi sang ngày mới). **Đổi tuyến** quay lại danh sách; **Làm lại** xoá tiến độ của các tuyến đang chọn.
 
 **Tạo cấu hình tuyến** — mở project Apps Script (`clasp open-script`), chọn hàm rồi bấm **Run**:
 
@@ -78,14 +91,7 @@ Cách gom: mỗi tuyến bắt đầu từ xã ngoài cùng, lần lượt lấy
 
 `config_tuyen` (`ten_tuyen, phuong_xa, quan_huyen, lat, lng, so_don`) sửa tay được — đổi `ten_tuyen` để chuyển xã sang tuyến khác. Xã không tìm được toạ độ được ghi với `ten_tuyen` trống để điền tay. Muốn tạo lại từ đầu: xoá sheet `config_tuyen` rồi chạy `taoCauHinhTuyen`.
 
-| Trường hợp | Giọng đọc |
-|---|---|
-| Có tuyến | "Tuyến 3, Xã Đại Đồng" |
-| Xã chưa có trong `config_tuyen` | "Chưa có tuyến, Xã …" → chạy `boSungTuyen` |
-| Địa chỉ không có phường/xã | "Chưa rõ phường xã" |
-| Đơn huỷ / không có | "Đơn đã huỷ" / "Không tìm thấy đơn" |
-
-**Bản đồ (Goong):** sau khi đọc tuyến, trang hiện bản đồ: 🔴 vị trí đơn, 🔵 các phường/xã của tuyến — nhìn là biết đơn có nằm trong vùng tuyến không. Vị trí đơn lấy bằng cách gửi địa chỉ đơn sang Goong (chỉ khi quét, mỗi đơn một lần), lưu cache ở sheet `toa_do_don` (xoá dòng để định vị lại). Nếu Goong không đặt được địa chỉ vào đúng quận/huyện thì dùng điểm của phường/xã. API chỉ trả toạ độ của đơn vừa quét, không trả danh sách.
+**Bản đồ (Goong):** ở màn hình quét: 🔵 các phường/xã của tuyến đã chọn, 🟢 thêm một điểm cho mỗi đơn quét được. Vị trí đơn lấy bằng cách gửi địa chỉ đơn sang Goong (chỉ khi quét, mỗi đơn một lần), lưu cache ở sheet `toa_do_don` (xoá dòng để định vị lại). Nếu Goong không đặt được địa chỉ vào đúng quận/huyện thì dùng điểm của phường/xã. API chỉ trả toạ độ của đơn vừa quét, không trả danh sách.
 
 Key Goong: REST API key ở `gas/config.js` (`GOONG_API_KEY`, không đưa lên git); Maptiles key ở `web/config.js` (`goongMaptilesKey`, công khai — nên giới hạn tên miền trong trang quản trị Goong). Gói miễn phí Maptiles ~1.000 lượt tải bản đồ/tháng; bản đồ chỉ tải khi quét ở chế độ Tuyến.
 
@@ -96,7 +102,7 @@ web/                  giao diện (GitHub Pages, deploy tự động khi push ma
   index.html, style.css
   config.js           URL API Apps Script (/exec)
   lookup.js           logic tra cứu phía client (được test bằng Node)
-  order-map.js        bản đồ Goong ở chế độ Tuyến (tải thư viện khi cần)
+  order-map.js        bản đồ Goong ở chế độ Tuyến: điểm xã + đơn đã quét (tải thư viện khi cần)
   app.js              điều khiển: tải dữ liệu, nhập liệu, camera, giọng nói
 gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)

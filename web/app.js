@@ -1,7 +1,7 @@
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
 // "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan)
 // "Backlog" mode (speak the days left to the deadline from sheet back_log)
-// and "Tuyến" mode (speak the delivery route of the order's ward from sheet config_tuyen).
+// and "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck).
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var els = {
@@ -26,6 +26,14 @@
     writeCol: $('write-col'),
     writeRow: $('write-row'),
     nextCell: $('next-cell'),
+    routePicker: $('route-picker'),
+    routeList: $('route-list'),
+    routeStart: $('route-start'),
+    routeProgress: $('route-progress'),
+    routeNames: $('route-names'),
+    routeCount: $('route-count'),
+    routeChange: $('route-change'),
+    routeReset: $('route-reset'),
     mapBox: $('map-box'),
     mapNote: $('map-note'),
     map: $('order-map'),
@@ -39,7 +47,6 @@
   var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don | 'backlog' = days left | 'route' = route
   var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
   var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
-  var mapSeq = 0; // only the latest scan may draw the map (earlier locate calls can finish later)
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
   // ---------- Speech ----------
@@ -90,6 +97,7 @@
         var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
         var routeInfo = body.routes ? countRoutes(body.routes) + ' tuyến' : 'tuyến lỗi: ' + body.routesError;
         els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · cập nhật ' + time;
+        if (mode === 'route') showRouteScreen(); // totals follow the reloaded raw_data
       })
       .catch(function (err) {
         var msg = (err && err.message) || String(err);
@@ -115,7 +123,7 @@
     if (mode === 'write') { queueWrite(raw); return; }
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
-    if (mode === 'route') { handleRoute(raw); return; }
+    if (mode === 'route') { handleRouteScan(raw); return; }
     var r = Lookup.resolveScan(raw, index);
     if (r.status === 'empty') return;
     if (r.status === 'ok') showResult(r.status, r.location, r.district, r.code);
@@ -193,8 +201,9 @@
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
     });
     els.writePanel.hidden = mode !== 'write';
-    hideMap();
-    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog', route: 'Chế độ đọc tuyến theo phường/xã' };
+    leaveRouteScreens();
+    if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
+    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
   }
@@ -228,23 +237,193 @@
     return Object.keys(names).length;
   }
 
-  function handleRoute(raw) {
-    var r = Lookup.resolveRoute(raw, index);
-    if (r.status === 'empty') return;
-    if (r.status === 'ok') showResult(r.status, r.route, r.ward + ' · ' + r.district, r.code);
-    else if (r.status === 'cancelled') showResult(r.status, 'Đơn đã huỷ', '', r.code);
-    else if (r.status === 'no_ward') showResult(r.status, 'Chưa rõ phường/xã', 'Địa chỉ không có phường/xã', r.code);
-    else if (r.status === 'unmapped') showResult(r.status, 'Chưa có tuyến', r.ward + ' · ' + r.district + ' — chạy boSungTuyen()', r.code);
-    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có cấu hình tuyến', els.status.textContent);
-    else showResult(r.status, 'Không tìm thấy đơn', '', r.input);
-    speak(r.speech);
-    if (r.status === 'ok' || r.status === 'unmapped' || r.status === 'no_ward') showOrderMap(r); else hideMap();
+  // ---------- Tuyến mode: pick routes, then check each order loaded onto the truck ----------
+  // Progress lives in this browser only (one scanner per truck); it is dropped on a new day.
+  var ROUTE_STATE_KEY = 'routeScan.v1';
+  var routeState = loadRouteState();
+
+  function today() {
+    return new Date().toLocaleDateString('vi-VN');
   }
 
-  // ---------- Map (Tuyến mode) ----------
-  function hideMap() {
-    mapSeq++;
+  function loadRouteState() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(ROUTE_STATE_KEY) || 'null');
+      if (saved && saved.day === today() && Array.isArray(saved.selected) && saved.scanned) return saved;
+    } catch (e) { /* storage blocked or corrupt: start fresh */ }
+    return { day: today(), selected: [], scanned: {}, active: false };
+  }
+
+  function saveRouteState() {
+    try { localStorage.setItem(ROUTE_STATE_KEY, JSON.stringify(routeState)); } catch (e) { /* not persisted */ }
+  }
+
+  function showRouteScreen() {
+    if (!index) return;
+    if (routeState.active && routeState.selected.length) enterRouteScan(); else showRoutePicker();
+  }
+
+  function leaveRouteScreens() {
+    els.routePicker.hidden = true;
+    els.routeProgress.hidden = true;
+    els.form.hidden = false;
+    els.result.hidden = false;
     els.mapBox.hidden = true;
+  }
+
+  function el(tag, className, text) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text != null) node.textContent = text; // sheet values are text, never HTML
+    return node;
+  }
+
+  function showRoutePicker() {
+    els.routePicker.hidden = false;
+    els.routeProgress.hidden = true;
+    els.form.hidden = true;
+    els.result.hidden = true;
+    els.mapBox.hidden = true;
+    var summary = Lookup.routeSummary(index);
+    els.routeList.textContent = '';
+    if (!summary.length) els.routeList.appendChild(el('div', 'muted', 'Chưa có cấu hình tuyến (sheet config_tuyen).'));
+    summary.forEach(function (route) {
+      var item = el('div', 'route-item');
+      var head = el('label', 'route-head');
+      var box = el('input');
+      box.type = 'checkbox';
+      box.value = route.name;
+      box.checked = routeState.selected.indexOf(route.name) >= 0;
+      head.appendChild(box);
+      head.appendChild(el('b', '', route.name));
+      head.appendChild(el('span', 'muted', route.total + ' đơn'));
+      item.appendChild(head);
+      route.districts.forEach(function (d) {
+        var details = el('details');
+        details.appendChild(el('summary', '', d.name + ' · ' + d.total + ' đơn'));
+        var list = el('ul');
+        d.wards.forEach(function (w) { list.appendChild(el('li', '', w.name + ' · ' + w.total + ' đơn')); });
+        details.appendChild(list);
+        item.appendChild(details);
+      });
+      els.routeList.appendChild(item);
+    });
+    updateRouteStart();
+  }
+
+  function pickedRoutes() {
+    return Array.prototype.filter.call(els.routeList.querySelectorAll('input[type=checkbox]'), function (b) { return b.checked; })
+      .map(function (b) { return b.value; });
+  }
+
+  function updateRouteStart() {
+    var picked = pickedRoutes();
+    Array.prototype.forEach.call(els.routeList.querySelectorAll('input[type=checkbox]'), function (b) {
+      b.closest('.route-item').classList.toggle('is-selected', b.checked);
+    });
+    var total = picked.length ? Lookup.routeOrderCodes(picked, index).length : 0;
+    els.routeStart.disabled = !picked.length;
+    els.routeStart.textContent = picked.length
+      ? 'Bắt đầu quét · ' + picked.length + ' tuyến · ' + total + ' đơn'
+      : 'Chọn tuyến để bắt đầu';
+  }
+
+  els.routeList.addEventListener('change', updateRouteStart);
+
+  els.routeStart.addEventListener('click', function () {
+    routeState.selected = pickedRoutes();
+    routeState.active = true;
+    saveRouteState();
+    enterRouteScan();
+  });
+
+  els.routeChange.addEventListener('click', function () {
+    routeState.active = false;
+    saveRouteState();
+    showRoutePicker();
+  });
+
+  els.routeReset.addEventListener('click', function () {
+    if (!window.confirm('Xoá tiến độ quét của các tuyến đang chọn?')) return;
+    Lookup.routeOrderCodes(routeState.selected, index).forEach(function (code) { delete routeState.scanned[code]; });
+    saveRouteState();
+    enterRouteScan();
+  });
+
+  function enterRouteScan() {
+    els.routePicker.hidden = true;
+    els.routeProgress.hidden = false;
+    els.form.hidden = false;
+    els.result.hidden = false;
+    els.routeNames.textContent = routeState.selected.join(', ');
+    updateRouteCount();
+    showResult('idle', 'Sẵn sàng quét', 'Quét đơn để kiểm tra có thuộc tuyến không');
+    drawRouteMap();
+    focusInput();
+  }
+
+  /** Counter "done/total" of the selected routes; returns {done, total}. */
+  function updateRouteCount() {
+    var codes = Lookup.routeOrderCodes(routeState.selected, index);
+    var done = codes.filter(function (c) { return routeState.scanned[c]; }).length;
+    els.routeCount.textContent = done + '/' + codes.length;
+    els.routeCount.classList.toggle('is-done', codes.length > 0 && done === codes.length);
+    return { done: done, total: codes.length };
+  }
+
+  function scannedPins() {
+    return Lookup.routeOrderCodes(routeState.selected, index)
+      .map(function (code) { var p = routeState.scanned[code]; return p && p.lat != null ? { code: code, lat: p.lat, lng: p.lng } : null; })
+      .filter(Boolean);
+  }
+
+  function drawRouteMap() {
+    var key = window.APP_CONFIG.goongMaptilesKey;
+    if (!key) { els.mapBox.hidden = true; return; }
+    var wards = [];
+    routeState.selected.forEach(function (name) { wards = wards.concat(Lookup.routeWardPoints(name, index)); });
+    els.mapBox.hidden = false;
+    els.mapNote.textContent = '🔵 ' + wards.length + ' phường/xã của tuyến · 🟢 đơn đã quét';
+    OrderMap.show(els.map, key, { wards: wards, pins: scannedPins() }).catch(function (err) {
+      els.mapNote.textContent = 'Không hiển thị được bản đồ: ' + ((err && err.message) || err);
+    });
+  }
+
+  function handleRouteScan(raw) {
+    if (els.routeProgress.hidden) return; // still on the route list
+    var r = Lookup.resolveRouteCheck(raw, index, routeState.selected, routeState.scanned);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') {
+      routeState.scanned[r.code] = true;
+      saveRouteState();
+      var c = updateRouteCount();
+      var complete = c.done === c.total;
+      showResult('ok', 'Có', c.done + '/' + c.total + ' · ' + r.route + ' · ' + r.ward, r.code);
+      speak(complete ? 'Có, đủ đơn' : 'Có');
+      pinOrder(r.code);
+      return;
+    }
+    if (r.status === 'duplicate') showResult('unmapped', 'Đã quét', r.route, r.code);
+    else if (r.status === 'other_route') showResult('not_found', 'Không', r.route ? 'Thuộc ' + r.route : 'Đơn chưa có tuyến', r.code);
+    else if (r.status === 'cancelled') showResult('cancelled', 'Đơn đã huỷ', 'Không xuất — tách riêng', r.code);
+    else if (r.status === 'unavailable') showResult('unavailable', 'Chưa có cấu hình tuyến', els.status.textContent);
+    else showResult('not_found', 'Không tìm thấy đơn', '', r.input);
+    speak(r.speech);
+  }
+
+  /** Put a scanned order on the map (its point is kept with the progress, so reloads need no call). */
+  function pinOrder(code) {
+    if (!window.APP_CONFIG.goongMaptilesKey) return;
+    locate(code)
+      .then(function (p) {
+        if (!routeState.scanned[code]) return; // progress was reset meanwhile
+        routeState.scanned[code] = { lat: p.lat, lng: p.lng };
+        saveRouteState();
+        OrderMap.addPin({ code: code, lat: p.lat, lng: p.lng });
+      })
+      .catch(function (err) {
+        els.mapNote.textContent = 'Không định vị được đơn ' + code + ': ' + ((err && err.message) || err);
+      });
   }
 
   function locate(code) {
@@ -258,26 +437,6 @@
         if (body.error) throw new Error(body.error);
         orderPoints[code] = body;
         return body;
-      });
-  }
-
-  function showOrderMap(r) {
-    var key = window.APP_CONFIG.goongMaptilesKey;
-    if (!key) { hideMap(); return; }
-    var seq = ++mapSeq;
-    els.mapBox.hidden = false;
-    els.mapNote.textContent = 'Đang định vị đơn…';
-    locate(r.code)
-      .then(function (point) {
-        if (seq !== mapSeq) return null;
-        var wards = r.route ? Lookup.routeWardPoints(r.route, index) : [];
-        els.mapNote.textContent =
-          (point.nguon === 'dia_chi' ? '🔴 Vị trí theo địa chỉ' : '🔴 Không định vị được địa chỉ — hiển thị trung tâm phường/xã') +
-          (wards.length ? ' · 🔵 ' + wards.length + ' xã của ' + r.route : '');
-        return OrderMap.show(els.map, key, { order: point, wards: wards });
-      })
-      .catch(function (err) {
-        if (seq === mapSeq) els.mapNote.textContent = 'Không hiển thị được bản đồ: ' + ((err && err.message) || err);
       });
   }
 
