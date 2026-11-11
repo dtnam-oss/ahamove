@@ -7,7 +7,7 @@
 // iframe does not grant the `camera` permission, so live camera scanning cannot work inside it.
 
 // SHEET_ID is defined in config.js (git-ignored, pushed by clasp). See config.example.js.
-const DATA_SHEET = 'data';
+const DATA_SHEET = 'raw_data'; // order source (columns found by header name)
 const CONFIG_SHEET = 'config';
 const SCAN_SHEET = 'data_don';
 const APP_URL = 'https://dtnam-oss.github.io/ahamove/';

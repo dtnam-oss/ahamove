@@ -12,7 +12,7 @@ Giao diện không chạy bên trong Apps Script vì iframe của Apps Script kh
 ## Luồng xử lý
 
 1. User quét **Mã vận đơn** (vd `GYEGFF9C`) bằng súng barcode (PC/mobile) hoặc camera điện thoại (QR/barcode).
-2. Tra cột `tracking_number` ở sheet `data`.
+2. Tra cột `tracking_number` ở sheet `raw_data` (cột được tìm theo tên tiêu đề, thứ tự cột không quan trọng).
 3. Nếu cột `status` = `NEED_RETURN_TO_PARTNER_ASAP` → đọc "Đơn đã huỷ" và dừng (danh sách trạng thái huỷ: `CANCELLED_STATUSES` trong `web/lookup.js`).
 4. Ngược lại lấy `district`, so với cột `khu_vuc` ở sheet `config` (một ô có thể chứa nhiều quận, phân tách dấu phẩy).
 5. Đọc to và hiển thị kết quả:

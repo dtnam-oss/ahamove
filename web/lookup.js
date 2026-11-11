@@ -17,7 +17,7 @@ var Lookup = (function () {
     return String(value == null ? '' : value).trim().toUpperCase();
   }
 
-  /** Order statuses (sheet `data`, column `status`) that mean the order was cancelled. */
+  /** Order statuses (sheet `raw_data`, column `status`) that mean the order was cancelled. */
   var CANCELLED_STATUSES = ['NEED_RETURN_TO_PARTNER_ASAP'];
 
   function isCancelled(status) {

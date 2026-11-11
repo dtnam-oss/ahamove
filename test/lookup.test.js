@@ -35,17 +35,17 @@ function loadServer(tables) {
   return ctx;
 }
 
-// Mirrors the current `data` sheet: key = tracking_number. The trailing partner_order_code
-// column holds stale values from an older layout (not aligned with the row) and must be ignored.
+// Mirrors the `raw_data` sheet layout (key = tracking_number, not the first column).
+// dropoff is the customer address and must never reach the payload.
 const DATA = [
-  ['tracking_number', 'status', 'district', 'mobile_seller', 'partner_order_code'],
-  ['GYEGFF9C', 'VERIFYING', 'Huyện Thanh Trì', '0900000001', 'GYE7R6DF'],
-  [' gyegffye ', 'VERIFYING', 'Huyện Quốc Oai', '0900000002', 'GYE7YM3A'],
-  ['AAAA1111', 'VERIFYING', 'Huyện Ứng Hoà', '', ''], // old-style tone placement
-  ['BBBB2222', 'VERIFYING', '', '', ''],
-  ['CCCC3333', 'NEED_RETURN_TO_PARTNER_ASAP', 'Huyện Thanh Trì', '', ''],
-  ['DDDD4444', ' need_return_to_partner_asap ', 'Huyện Quốc Oai', '', ''],
-  ['', '', '', '', ''],
+  ['date', 'tracking_number', 'partner', 'status', 'district', 'dropoff'],
+  ['2026-11-10', 'GYEGFF9C', 'ghn', 'TRANSPORTING', 'Huyện Thanh Trì', 'Số 1 Ngõ A'],
+  ['2026-11-10', ' gyegffye ', 'ghn', 'ASSIGNING', 'Huyện Quốc Oai', 'Số 2 Ngõ B'],
+  ['2026-11-10', 'AAAA1111', 'ghn', 'ACCEPTED', 'Huyện Ứng Hoà', ''], // old-style tone placement
+  ['2026-11-10', 'BBBB2222', 'ghn', 'FAILED', '', ''],
+  ['2026-11-10', 'CCCC3333', 'ghn', 'NEED_RETURN_TO_PARTNER_ASAP', 'Huyện Thanh Trì', ''],
+  ['2026-11-10', 'DDDD4444', 'ghn', ' need_return_to_partner_asap ', 'Huyện Quốc Oai', ''],
+  ['', '', '', '', '', ''],
 ];
 const CONFIG = [
   ['ma_vi_tri', 'ten_vi_tri', 'khu_vuc'],
@@ -55,7 +55,7 @@ const CONFIG = [
 ];
 
 function setup() {
-  const server = loadServer({ data: DATA, config: CONFIG });
+  const server = loadServer({ raw_data: DATA, config: CONFIG });
   const payload = server.getLookupData();
   const Lookup = loadLookup();
   return { payload, Lookup, index: Lookup.buildIndex(payload) };
@@ -67,27 +67,26 @@ test('server payload: tracking_number -> {district, status}, parsed config, no P
   assert.deepEqual(Object.keys(payload.orders).sort(), ['AAAA1111', 'BBBB2222', 'CCCC3333', 'DDDD4444', 'GYEGFF9C', 'GYEGFFYE']);
   assert.equal(payload.orders.GYEGFFYE.district, 'Huyện Quốc Oai');
   assert.equal(payload.orders.CCCC3333.status, 'NEED_RETURN_TO_PARTNER_ASAP');
-  assert.ok(!JSON.stringify(payload).includes('0900000002'));
+  assert.ok(!JSON.stringify(payload).includes('Ngõ'));
   assert.deepEqual([...payload.config[1].khu_vuc], ['Huyện Thanh Trì', 'Huyện Sóc Sơn']);
 });
 
-test('stale partner_order_code values are not lookup keys', () => {
-  const { Lookup, index } = setup();
-  assert.equal(Lookup.resolveScan('GYE7R6DF', index).status, 'not_found');
+test('orders are read from raw_data, not the old data sheet', () => {
+  assert.throws(() => loadServer({ data: DATA, config: CONFIG }).getLookupData(), /Không tìm thấy sheet "raw_data"/);
 });
 
 test('server reports missing columns and sheets', () => {
-  assert.throws(() => loadServer({ data: [['x']], config: CONFIG }).getLookupData(), /thiếu cột tracking_number/);
-  assert.throws(() => loadServer({ data: [['tracking_number', 'district']], config: CONFIG }).getLookupData(), /thiếu cột status/);
-  assert.throws(() => loadServer({ config: CONFIG }).getLookupData(), /Không tìm thấy sheet "data"/);
+  assert.throws(() => loadServer({ raw_data: [['x']], config: CONFIG }).getLookupData(), /thiếu cột tracking_number/);
+  assert.throws(() => loadServer({ raw_data: [['tracking_number', 'district']], config: CONFIG }).getLookupData(), /thiếu cột status/);
+  assert.throws(() => loadServer({ config: CONFIG }).getLookupData(), /Không tìm thấy sheet "raw_data"/);
 });
 
 test('doGet ?action=data returns JSON payload, errors as {error}', () => {
-  const ok = loadServer({ data: DATA, config: CONFIG }).doGet({ parameter: { action: 'data' } });
+  const ok = loadServer({ raw_data: DATA, config: CONFIG }).doGet({ parameter: { action: 'data' } });
   assert.equal(ok.mime, 'json');
   assert.equal(JSON.parse(ok.text).orderCount, 6);
   const bad = loadServer({ config: CONFIG }).doGet({ parameter: { action: 'data' } });
-  assert.match(JSON.parse(bad.text).error, /Không tìm thấy sheet "data"/);
+  assert.match(JSON.parse(bad.text).error, /Không tìm thấy sheet "raw_data"/);
 });
 
 test('mapped district speaks ten_vi_tri + district', () => {
@@ -197,7 +196,7 @@ function fakeScanSheet(filled = {}, maxRows = 1000, maxCols = 26) {
 }
 
 function scanServer(sheet) {
-  return loadServer({ data: DATA, config: CONFIG, data_don: sheet });
+  return loadServer({ raw_data: DATA, config: CONFIG, data_don: sheet });
 }
 
 test('writeScan writes the code as text at the chosen cell', () => {
@@ -245,7 +244,7 @@ test('writeScan rejects bad cells, formula-like codes and a missing sheet', () =
   for (const cell of ['', 'C0', '3C', 'C3:C9', 'ABCD1']) assert.throws(() => server.writeScan(cell, 'X1'), /Ô không hợp lệ/);
   for (const code of ['', '=HYPERLINK("x")', '+1', '@A', 'https://x.y/z']) assert.throws(() => server.writeScan('C3', code), /Mã không hợp lệ/);
   assert.throws(() => scanServer(fakeScanSheet({}, 1000, 3)).writeScan('D1', 'X1'), /nằm ngoài sheet/);
-  assert.throws(() => loadServer({ data: DATA, config: CONFIG }).writeScan('C3', 'X1'), /Không tìm thấy sheet "data_don"/);
+  assert.throws(() => loadServer({ raw_data: DATA, config: CONFIG }).writeScan('C3', 'X1'), /Không tìm thấy sheet "data_don"/);
 });
 
 test('doPost {action:write} returns the written cell, errors as {error}', () => {
