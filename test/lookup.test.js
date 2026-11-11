@@ -36,8 +36,9 @@ function gridSheet(values) {
 /**
  * Fake SpreadsheetApp over `tables` (sheet name -> 2D display values, or a fake sheet object).
  * `geo` maps the first part of a Goong geocoding query (the street part of a full address, or a bare
- * ward name) to {lat, lng, district, commune} - Goong's location + `compound`; `geo.httpStatus` forces
- * an HTTP error. Queried addresses are recorded in ctx.geocoded.
+ * ward name) to {lat, lng, district, commune} - Goong's location + `compound`. Limits: `geo.httpStatus`
+ * forces an HTTP error, `geo.tooFast` = number of next calls answered 429 (quota left), `geo.quota` =
+ * successful calls allowed before 429 with X-RateLimit-Remaining 0. Queried addresses: ctx.geocoded.
  */
 function loadServer(tables, geo = {}) {
   const spreadsheet = {
@@ -54,12 +55,19 @@ function loadServer(tables, geo = {}) {
     assert.equal(u.origin + u.pathname, 'https://rsapi.goong.io/geocode');
     assert.equal(u.searchParams.get('api_key'), 'test-key');
     const address = u.searchParams.get('address');
+    const limited = (status, left) => ({
+      getResponseCode: () => status,
+      getHeaders: () => ({ 'X-RateLimit-Limit': '1000', 'X-RateLimit-Remaining': String(left) }),
+      getContentText: () => '{}',
+    });
+    if (geo.tooFast > 0) { geo.tooFast--; return limited(429, 500); }
+    if (geo.quota !== undefined && geo.quota-- <= 0) return limited(429, 0);
     geocoded.push(address);
     const point = geo[address.split(',')[0].trim()];
     const body = point
       ? { status: 'OK', results: [{ geometry: { location: { lat: point.lat, lng: point.lng } }, compound: { district: point.district, commune: point.commune, province: 'Hà Nội' } }] }
       : { status: 'OK', results: [] };
-    return { getResponseCode: () => geo.httpStatus || 200, getContentText: () => JSON.stringify(body) };
+    return { getResponseCode: () => geo.httpStatus || 200, getHeaders: () => ({}), getContentText: () => JSON.stringify(body) };
   };
   const UrlFetchApp = {
     fetch: goong,
@@ -603,5 +611,32 @@ test('Goong key problems stop the run instead of misplacing wards', () => {
   const tables = { raw_data: DATA, config: CONFIG };
   assert.throws(() => loadServer(tables, { httpStatus: 403 }).taoCauHinhTuyen(), /Goong từ chối API key \(HTTP 403\)/);
   assert.equal(tables.config_tuyen, undefined);
-  assert.throws(() => loadServer(tables, { httpStatus: 429 }).locateOrder('GYEGFF9C'), /vượt hạn mức/);
+});
+
+test('Goong 429: a short burst is retried; persistent "too fast" or an empty quota stops the run', () => {
+  const geo = { tooFast: 2, 'Số 1 Ngõ A': { lat: 20.931, lng: 105.801, district: 'Thanh Trì' } };
+  const server = loadServer({ raw_data: DATA, config: CONFIG, config_tuyen: ROUTES_WITH_POINTS }, geo);
+  assert.equal(server.locateOrder('GYEGFF9C').nguon, 'dia_chi'); // succeeded after two 429s
+  const tooFast = loadServer({ raw_data: DATA, config: CONFIG }, { tooFast: 99 });
+  assert.throws(() => tooFast.locateOrder('GYEGFF9C'), /gọi quá nhanh \(HTTP 429\) kể cả sau 3 lần chờ/);
+  const empty = loadServer({ raw_data: DATA, config: CONFIG }, { quota: 0 });
+  assert.throws(() => empty.locateOrder('GYEGFF9C'), /đã dùng hết hạn mức 1000 lượt/);
+});
+
+test('a run stopped by the quota keeps its order points; the rerun reuses them', () => {
+  const data = DATA.concat(Array.from({ length: 7 }, (_, i) =>
+    ['2026-11-11', 'Q' + i, 'ghn', 'ASSIGNING', 'Huyện Thanh Trì', `Nhà ${i}, Xã Vĩnh Quỳnh, Huyện Thanh Trì, Hà Nội`]));
+  const geo = { quota: 5, 'Số 1 Ngõ A': { lat: 20.93, lng: 105.8, district: 'Thanh Trì' } };
+  for (let i = 0; i < 7; i++) geo['Nhà ' + i] = { lat: 20.95, lng: 105.81, district: 'Thanh Trì' };
+  const tables = { raw_data: data, config: CONFIG };
+  assert.throws(() => loadServer(tables, geo).taoCauHinhTuyen(), /hết hạn mức/);
+  assert.equal(tables.config_tuyen, undefined); // nothing half-built
+  const saved = tables.toa_do_don.length - 1;
+  assert.equal(saved, 4); // 2 wards, up to 3 samples each: the first batch of 5 minus the miss (Số 2 Ngõ B)
+
+  geo.quota = 100;
+  const rerun = loadServer(tables, geo);
+  rerun.taoCauHinhTuyen();
+  assert.ok(rerun.geocoded.every((a) => !/^Nhà [0-2],|^Số 1 Ngõ A/.test(a)), 'cached orders are not geocoded again');
+  assert.ok(tables.config_tuyen.length > 1);
 });

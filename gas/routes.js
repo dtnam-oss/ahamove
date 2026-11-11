@@ -31,8 +31,7 @@ function taoCauHinhTuyen() {
       ' dòng. Chạy boSungTuyen() để thêm xã mới, hoặc xoá sheet này để tạo lại từ đầu.');
   }
   const settings = readRouteSettings_(ss);
-  const wards = locateWards_(collectWards_(ss));
-  cacheOrderPoints_(ss, wards.orderPoints);
+  const wards = locateWards_(collectWards_(ss), readOrderPoints_(ss), function (points) { cacheOrderPoints_(ss, points); });
   const rows = clusterWards_(wards.located, settings, 1);
   writeRouteRows_(ss, rows.concat(wards.unlocated.map(unroutedRow_)));
   return logRouteSummary_('Tạo', rows, rows, wards.unlocated, settings);
@@ -46,8 +45,7 @@ function boSungTuyen() {
   const known = {};
   existing.rows.forEach(function (r) { known[wardKey_(r.phuong_xa, r.quan_huyen)] = true; });
   const fresh = collectWards_(ss).filter(function (w) { return !known[w.key]; });
-  const wards = locateWards_(fresh);
-  cacheOrderPoints_(ss, wards.orderPoints);
+  const wards = locateWards_(fresh, readOrderPoints_(ss), function (points) { cacheOrderPoints_(ss, points); });
   const rows = assignNewWards_(existing.rows, wards.located, settings);
   writeRouteRows_(ss, rows.concat(wards.unlocated.map(unroutedRow_)));
   return logRouteSummary_('Bổ sung', rows, existing.rows.concat(rows), wards.unlocated, settings);
@@ -156,9 +154,12 @@ function median_(values) {
  * Adds lat/lng to each ward: the median point of its sample order addresses that Goong places in
  * the ward's own district. A ward with no usable sample falls back to its bare name, accepted only
  * when Goong returns that same ward and district. Wards still without a point are split off for
- * manual entry. Also returns the order points found ({code, lat, lng, nguon}) for the map cache.
+ * manual entry.
+ * `cached` (code -> point, from toa_do_don) avoids re-geocoding orders located in an earlier run;
+ * `onOrderPoints(points)` receives new order points after every Goong batch so a run stopped by the
+ * quota keeps its progress. Also returns all new order points ({code, lat, lng, nguon}).
  */
-function locateWards_(wards) {
+function locateWards_(wards, cached, onOrderPoints) {
   const points = wards.map(function () { return []; });
   const orderPoints = [];
 
@@ -167,14 +168,22 @@ function locateWards_(wards) {
   wards.forEach(function (w, wi) {
     (w.samples || []).forEach(function (sample) {
       if (!sample.address) return;
+      const hit = cached && cached[sample.code];
+      if (hit && hit.nguon === 'dia_chi') { points[wi].push(hit); return; } // ward-point fallbacks are not samples
       queries.push({ address: sample.address, district: w.quan_huyen });
       owners.push({ ward: wi, code: sample.code });
     });
   });
-  goongGeocodeMany_(queries).forEach(function (p, i) {
-    if (!p) return;
-    points[owners[i].ward].push(p);
-    orderPoints.push({ code: owners[i].code, lat: p.lat, lng: p.lng, nguon: 'dia_chi' });
+  goongGeocodeMany_(queries, function (results, offset) {
+    const fresh = [];
+    results.forEach(function (p, k) {
+      if (!p) return;
+      const owner = owners[offset + k];
+      points[owner.ward].push(p);
+      fresh.push({ code: owner.code, lat: p.lat, lng: p.lng, nguon: 'dia_chi' });
+    });
+    Array.prototype.push.apply(orderPoints, fresh);
+    if (onOrderPoints && fresh.length) onOrderPoints(fresh);
   });
 
   const missing = [];

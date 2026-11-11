@@ -35,17 +35,24 @@ function locateOrder(code) {
   return result;
 }
 
-function findCachedPoint_(ss, code) {
+/** toa_do_don as code -> {code, lat, lng, nguon} ({} when the sheet does not exist yet). */
+function readOrderPoints_(ss) {
   const sheet = ss.getSheetByName(ORDER_POINT_SHEET);
-  if (!sheet) return null;
-  const values = sheet.getDataRange().getDisplayValues();
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim().toUpperCase() !== code) continue;
-    const lat = parseNumber_(values[i][1]);
-    const lng = parseNumber_(values[i][2]);
-    if (isFinite(lat) && isFinite(lng)) return { code: code, lat: lat, lng: lng, nguon: String(values[i][3]).trim() };
-  }
-  return null;
+  const points = {};
+  if (!sheet) return points;
+  sheet.getDataRange().getDisplayValues().slice(1).forEach(function (r) {
+    const code = String(r[0]).trim().toUpperCase();
+    const lat = parseNumber_(r[1]);
+    const lng = parseNumber_(r[2]);
+    if (code && !(code in points) && isFinite(lat) && isFinite(lng)) {
+      points[code] = { code: code, lat: lat, lng: lng, nguon: String(r[3]).trim() };
+    }
+  });
+  return points;
+}
+
+function findCachedPoint_(ss, code) {
+  return readOrderPoints_(ss)[code] || null;
 }
 
 /** Ward point from config_tuyen (used when the address itself cannot be placed). */
