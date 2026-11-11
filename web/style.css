@@ -121,6 +121,11 @@ html, body {
 .result-district { font-size: clamp(1.2rem, 5vw, 1.8rem); margin-top: 8px; }
 .result-code { color: var(--muted); margin-top: 10px; font-family: ui-monospace, monospace; word-break: break-all; }
 
+.map-box { display: grid; gap: 6px; }
+.order-map { height: 340px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border, #334155); }
+.ward-dot { width: 14px; height: 14px; border-radius: 50%; background: #2563eb; border: 2px solid #fff; box-shadow: 0 0 0 1px #1e3a8a; }
+.order-pin { width: 22px; height: 22px; border-radius: 50%; background: #dc2626; border: 3px solid #fff; box-shadow: 0 0 0 2px #7f1d1d; }
+
 .result-ok { background: #052e16; border-color: var(--ok); }
 .result-unmapped, .result-no_district, .result-no_days, .result-unavailable, .result-no_ward { background: #431407; border-color: var(--warn); }
 .result-pending { border-color: var(--primary); }

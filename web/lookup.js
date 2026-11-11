@@ -45,14 +45,20 @@ var Lookup = (function () {
       });
     }
     var routes = null;
+    var routePoints = new Map(); // ten_tuyen -> ward points of that route, for the map
     if (payload.routes) {
       routes = new Map();
       payload.routes.forEach(function (row) {
         var key = wardKey(row.phuong_xa, row.quan_huyen);
-        if (!routes.has(key)) routes.set(key, row.ten_tuyen); // first config row wins
+        if (routes.has(key)) return; // first config row wins
+        routes.set(key, row.ten_tuyen);
+        if (isFinite(row.lat) && isFinite(row.lng) && row.lat !== null && row.lng !== null) {
+          if (!routePoints.has(row.ten_tuyen)) routePoints.set(row.ten_tuyen, []);
+          routePoints.get(row.ten_tuyen).push({ phuong_xa: row.phuong_xa, lat: Number(row.lat), lng: Number(row.lng) });
+        }
       });
     }
-    return { orders: orders, areas: areas, backlog: backlog, routes: routes };
+    return { orders: orders, areas: areas, backlog: backlog, routes: routes, routePoints: routePoints };
   }
 
   /** Ward + district identify a ward (the same ward name exists in several districts). */
@@ -133,6 +139,11 @@ var Lookup = (function () {
     return { status: 'ok', code: code, ward: ward, district: district, route: route, speech: route + ', ' + ward };
   }
 
+  /** Ward points of a route (for the map); [] when unknown. */
+  function routeWardPoints(routeName, index) {
+    return (index.routePoints && index.routePoints.get(routeName)) || [];
+  }
+
   /** " c3 " -> "C3"; anything that is not a single A1 cell -> "". */
   function normalizeCell(value) {
     var cell = String(value == null ? '' : value).replace(/\s+/g, '').toUpperCase();
@@ -154,6 +165,7 @@ var Lookup = (function () {
     resolveScan: resolveScan,
     resolveBacklog: resolveBacklog,
     resolveRoute: resolveRoute,
+    routeWardPoints: routeWardPoints,
     normalizeCell: normalizeCell,
     nextCell: nextCell,
   };

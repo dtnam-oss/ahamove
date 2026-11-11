@@ -8,8 +8,9 @@
 //                        with room, or to new routes. Existing rows are never changed.
 // Limits live in sheet `cai_dat_tuyen` (created with defaults on first run) so users can tune them.
 //
-// Ward coordinates come from the built-in Maps geocoder, queried with the ward/district/city names
-// only (never the customer's street address), and are cached in config_tuyen (columns lat, lng).
+// Ward coordinates come from Goong geocoding (goong.js) of up to WARD_SAMPLES real order addresses of
+// that ward (the ward name alone geocodes poorly), and are cached in config_tuyen (columns lat, lng).
+// The order points found on the way are cached in toa_do_don for the scan page's map.
 
 const ROUTE_SHEET = 'config_tuyen';
 const ROUTE_HEADER = ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_don'];
@@ -31,6 +32,7 @@ function taoCauHinhTuyen() {
   }
   const settings = readRouteSettings_(ss);
   const wards = locateWards_(collectWards_(ss));
+  cacheOrderPoints_(ss, wards.orderPoints);
   const rows = clusterWards_(wards.located, settings, 1);
   writeRouteRows_(ss, rows.concat(wards.unlocated.map(unroutedRow_)));
   return logRouteSummary_('Tạo', rows, rows, wards.unlocated, settings);
@@ -45,6 +47,7 @@ function boSungTuyen() {
   existing.rows.forEach(function (r) { known[wardKey_(r.phuong_xa, r.quan_huyen)] = true; });
   const fresh = collectWards_(ss).filter(function (w) { return !known[w.key]; });
   const wards = locateWards_(fresh);
+  cacheOrderPoints_(ss, wards.orderPoints);
   const rows = assignNewWards_(existing.rows, wards.located, settings);
   writeRouteRows_(ss, rows.concat(wards.unlocated.map(unroutedRow_)));
   return logRouteSummary_('Bổ sung', rows, existing.rows.concat(rows), wards.unlocated, settings);
@@ -124,8 +127,11 @@ function collectWards_(ss) {
     const district = String(r[data.col.district]).trim();
     if (!ward || !district) return;
     const key = wardKey_(ward, district);
-    if (!byKey[key]) byKey[key] = { key: key, phuong_xa: ward, quan_huyen: district, city: parseCity_(address), so_don: 0 };
+    if (!byKey[key]) byKey[key] = { key: key, phuong_xa: ward, quan_huyen: district, city: parseCity_(address), so_don: 0, samples: [] };
     byKey[key].so_don++;
+    if (byKey[key].samples.length < WARD_SAMPLES) {
+      byKey[key].samples.push({ code: String(r[data.col.tracking_number]).trim().toUpperCase(), address: String(address).trim() });
+    }
   });
   return Object.keys(byKey).map(function (k) { return byKey[k]; })
     .sort(function (a, b) { return b.so_don - a.so_don || (a.key < b.key ? -1 : 1); });
@@ -133,48 +139,65 @@ function collectWards_(ss) {
 
 // ---------- Geocoding ----------
 
-// A ward point farther than this from its district centre is a geocoding mismatch: ward names repeat
-// across districts (e.g. "Xã Tam Hiệp" exists in Thanh Trì and Phúc Thọ) and the geocoder sometimes
-// returns the other one. Hanoi's largest districts are well under this radius.
-const MAX_WARD_TO_DISTRICT_KM = 15;
+const WARD_SAMPLES = 3; // order addresses geocoded per ward
 
-/**
- * Adds lat/lng to each ward. Uses the district centre when the ward is not found or lands too far
- * from its own district; splits off the wards with no usable point at all.
- */
-function locateWards_(wards) {
-  const geocoder = Maps.newGeocoder().setRegion('vn').setLanguage('vi');
-  const districtCache = {};
-  const located = [];
-  const unlocated = [];
-  wards.forEach(function (w) {
-    const dk = foldText_(w.quan_huyen + ',' + w.city);
-    if (!(dk in districtCache)) districtCache[dk] = geocode_(geocoder, [w.quan_huyen, w.city]);
-    const centre = districtCache[dk];
-    let point = geocode_(geocoder, [w.phuong_xa, w.quan_huyen, w.city]);
-    if (point && centre && distanceKm_(point, centre) > MAX_WARD_TO_DISTRICT_KM) {
-      console.warn(w.phuong_xa + ' (' + w.quan_huyen + '): toạ độ cách trung tâm huyện ' +
-        Math.round(distanceKm_(point, centre)) + ' km, dùng toạ độ trung tâm huyện');
-      point = null;
-    }
-    if (!point) point = centre;
-    if (point) located.push(Object.assign({}, w, point));
-    else unlocated.push(w);
-  });
-  return { located: located, unlocated: unlocated };
+/** "Xã Tuy Lai" -> "Tuy Lai" (Goong matches bare names far better than prefixed ones). */
+function stripAdminPrefix_(name) {
+  return String(name).replace(/^(xã|phường|thị trấn|huyện|quận|thị xã|thành phố)\s+/i, '').trim();
 }
 
-function geocode_(geocoder, parts) {
-  const query = parts.filter(String).join(', ') + ', Việt Nam';
-  try {
-    const res = geocoder.geocode(query);
-    Utilities.sleep(150); // stay well under the Maps service rate limit
-    const loc = res && res.status === 'OK' && res.results && res.results[0] && res.results[0].geometry.location;
-    return loc ? { lat: Number(loc.lat), lng: Number(loc.lng) } : null;
-  } catch (err) {
-    console.warn('Geocode lỗi "' + query + '": ' + err);
-    return null;
-  }
+function median_(values) {
+  const v = values.slice().sort(function (a, b) { return a - b; });
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2;
+}
+
+/**
+ * Adds lat/lng to each ward: the median point of its sample order addresses that Goong places in
+ * the ward's own district. A ward with no usable sample falls back to its bare name, accepted only
+ * when Goong returns that same ward and district. Wards still without a point are split off for
+ * manual entry. Also returns the order points found ({code, lat, lng, nguon}) for the map cache.
+ */
+function locateWards_(wards) {
+  const points = wards.map(function () { return []; });
+  const orderPoints = [];
+
+  const queries = [];
+  const owners = [];
+  wards.forEach(function (w, wi) {
+    (w.samples || []).forEach(function (sample) {
+      if (!sample.address) return;
+      queries.push({ address: sample.address, district: w.quan_huyen });
+      owners.push({ ward: wi, code: sample.code });
+    });
+  });
+  goongGeocodeMany_(queries).forEach(function (p, i) {
+    if (!p) return;
+    points[owners[i].ward].push(p);
+    orderPoints.push({ code: owners[i].code, lat: p.lat, lng: p.lng, nguon: 'dia_chi' });
+  });
+
+  const missing = [];
+  wards.forEach(function (w, wi) { if (!points[wi].length) missing.push(wi); });
+  goongGeocodeMany_(missing.map(function (wi) {
+    const w = wards[wi];
+    return { address: [stripAdminPrefix_(w.phuong_xa), stripAdminPrefix_(w.quan_huyen), w.city].filter(String).join(', '), district: w.quan_huyen };
+  })).forEach(function (p, k) {
+    const w = wards[missing[k]];
+    if (p && adminName_(p.commune) === adminName_(w.phuong_xa)) points[missing[k]].push(p);
+  });
+
+  const located = [];
+  const unlocated = [];
+  wards.forEach(function (w, wi) {
+    const ps = points[wi];
+    if (!ps.length) { unlocated.push(w); return; }
+    located.push(Object.assign({}, w, {
+      lat: median_(ps.map(function (p) { return p.lat; })),
+      lng: median_(ps.map(function (p) { return p.lng; })),
+    }));
+  });
+  return { located: located, unlocated: unlocated, orderPoints: orderPoints };
 }
 
 // ---------- Grouping (pure, unit-tested) ----------
@@ -380,14 +403,28 @@ function writeRouteRows_(ss, rows) {
 // ---------- Payload for the scan page ----------
 
 /** config_tuyen is optional for the other modes: a problem there is reported, never breaks the payload. */
+/** Display value -> number, accepting a decimal comma (vi locale); empty/missing -> NaN. */
+function parseNumber_(value) {
+  const text = String(value == null ? '' : value).trim();
+  return text ? Number(text.replace(',', '.')) : NaN;
+}
+
 function readRoutes_(ss) {
   try {
     const table = readTable_(ss, ROUTE_SHEET, ['ten_tuyen', 'phuong_xa', 'quan_huyen']);
+    const latCol = table.header.indexOf('lat');
+    const lngCol = table.header.indexOf('lng');
     const routes = [];
     table.rows.forEach(function (r) {
       const name = String(r[table.col.ten_tuyen]).trim();
       const ward = String(r[table.col.phuong_xa]).trim();
-      if (name && ward) routes.push({ ten_tuyen: name, phuong_xa: ward, quan_huyen: String(r[table.col.quan_huyen]).trim() });
+      if (!name || !ward) return;
+      const row = { ten_tuyen: name, phuong_xa: ward, quan_huyen: String(r[table.col.quan_huyen]).trim() };
+      // Ward points (not customer data) let the scan page draw the route's area on the map.
+      const lat = parseNumber_(r[latCol]);
+      const lng = parseNumber_(r[lngCol]);
+      if (isFinite(lat) && isFinite(lng)) { row.lat = lat; row.lng = lng; }
+      routes.push(row);
     });
     return { routes: routes, error: '' };
   } catch (err) {

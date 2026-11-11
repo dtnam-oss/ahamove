@@ -26,6 +26,9 @@
     writeCol: $('write-col'),
     writeRow: $('write-row'),
     nextCell: $('next-cell'),
+    mapBox: $('map-box'),
+    mapNote: $('map-note'),
+    map: $('order-map'),
   };
 
   var index = null;
@@ -36,6 +39,8 @@
   var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don | 'backlog' = days left | 'route' = route
   var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
   var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
+  var mapSeq = 0; // only the latest scan may draw the map (earlier locate calls can finish later)
+  var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
   // ---------- Speech ----------
   var viVoice = null;
@@ -188,6 +193,7 @@
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
     });
     els.writePanel.hidden = mode !== 'write';
+    hideMap();
     var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog', route: 'Chế độ đọc tuyến theo phường/xã' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
@@ -232,6 +238,47 @@
     else if (r.status === 'unavailable') showResult(r.status, 'Chưa có cấu hình tuyến', els.status.textContent);
     else showResult(r.status, 'Không tìm thấy đơn', '', r.input);
     speak(r.speech);
+    if (r.status === 'ok' || r.status === 'unmapped' || r.status === 'no_ward') showOrderMap(r); else hideMap();
+  }
+
+  // ---------- Map (Tuyến mode) ----------
+  function hideMap() {
+    mapSeq++;
+    els.mapBox.hidden = true;
+  }
+
+  function locate(code) {
+    if (orderPoints[code]) return Promise.resolve(orderPoints[code]);
+    return fetch(window.APP_CONFIG.apiUrl + '?action=locate&code=' + encodeURIComponent(code))
+      .then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (body) {
+        if (body.error) throw new Error(body.error);
+        orderPoints[code] = body;
+        return body;
+      });
+  }
+
+  function showOrderMap(r) {
+    var key = window.APP_CONFIG.goongMaptilesKey;
+    if (!key) { hideMap(); return; }
+    var seq = ++mapSeq;
+    els.mapBox.hidden = false;
+    els.mapNote.textContent = 'Đang định vị đơn…';
+    locate(r.code)
+      .then(function (point) {
+        if (seq !== mapSeq) return null;
+        var wards = r.route ? Lookup.routeWardPoints(r.route, index) : [];
+        els.mapNote.textContent =
+          (point.nguon === 'dia_chi' ? '🔴 Vị trí theo địa chỉ' : '🔴 Không định vị được địa chỉ — hiển thị trung tâm phường/xã') +
+          (wards.length ? ' · 🔵 ' + wards.length + ' xã của ' + r.route : '');
+        return OrderMap.show(els.map, key, { order: point, wards: wards });
+      })
+      .catch(function (err) {
+        if (seq === mapSeq) els.mapNote.textContent = 'Không hiển thị được bản đồ: ' + ((err && err.message) || err);
+      });
   }
 
   function focusInput() {

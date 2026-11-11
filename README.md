@@ -64,7 +64,7 @@ Bấm **Tuyến** rồi quét: lấy phường/xã trong địa chỉ (cột `dr
 
 | Hàm | Khi nào | Làm gì |
 |---|---|---|
-| `taoCauHinhTuyen` | Lần đầu | Lấy toạ độ từng phường/xã (Google Maps, chỉ gửi tên xã/huyện), gom các xã gần nhau thành Tuyến 1, 2, … (mỗi tuyến = một chuyến xe) ghi vào `config_tuyen`. Không chạy nếu sheet đã có dữ liệu. |
+| `taoCauHinhTuyen` | Lần đầu | Lấy toạ độ từng phường/xã bằng Goong (từ địa chỉ của tối đa 3 đơn trong xã), gom các xã gần nhau thành Tuyến 1, 2, … (mỗi tuyến = một chuyến xe) ghi vào `config_tuyen`. Không chạy nếu sheet đã có dữ liệu. |
 | `boSungTuyen` | Khi có xã mới | Chỉ thêm xã chưa có: vào tuyến gần nhất còn chỗ, nếu không thì mở tuyến mới. Không sửa dòng cũ. |
 
 Giới hạn chỉnh trong sheet `cai_dat_tuyen` (tự tạo lần chạy đầu):
@@ -74,7 +74,7 @@ Giới hạn chỉnh trong sheet `cai_dat_tuyen` (tự tạo lần chạy đầu
 | `so_don_toi_thieu_moi_tuyen` | 30 | Một chuyến xe có ít nhất số đơn này (đếm theo `raw_data` lúc chạy) |
 | `so_don_toi_da_moi_tuyen` | 45 | Một chuyến xe có nhiều nhất số đơn này (sức chở) |
 
-Cách gom: mỗi tuyến bắt đầu từ xã ngoài cùng, lần lượt lấy xã gần nhất cho tới khi đủ số đơn tối thiểu (không vượt tối đa). Tuyến còn thiếu đơn ở cuối được tách ra, từng xã nhập vào tuyến gần nhất còn chỗ. Không giới hạn khoảng cách — vùng ngoại thành thưa đơn sẽ có tuyến dài hơn. Tuyến nào vẫn dưới tối thiểu (không còn tuyến gần còn chỗ) được liệt kê trong Execution log. Xã bị Google Maps trả toạ độ cách trung tâm huyện của nó > 15 km (trùng tên xã ở huyện khác) dùng toạ độ trung tâm huyện.
+Cách gom: mỗi tuyến bắt đầu từ xã ngoài cùng, lần lượt lấy xã gần nhất cho tới khi đủ số đơn tối thiểu (không vượt tối đa). Tuyến còn thiếu đơn ở cuối được tách ra, từng xã nhập vào tuyến gần nhất còn chỗ. Không giới hạn khoảng cách — vùng ngoại thành thưa đơn sẽ có tuyến dài hơn. Tuyến nào vẫn dưới tối thiểu (không còn tuyến gần còn chỗ) được liệt kê trong Execution log. Kết quả Goong chỉ được dùng khi nằm đúng quận/huyện của đơn; xã không định vị được ghi với `ten_tuyen` trống để điền tay.
 
 `config_tuyen` (`ten_tuyen, phuong_xa, quan_huyen, lat, lng, so_don`) sửa tay được — đổi `ten_tuyen` để chuyển xã sang tuyến khác. Xã không tìm được toạ độ được ghi với `ten_tuyen` trống để điền tay. Muốn tạo lại từ đầu: xoá sheet `config_tuyen` rồi chạy `taoCauHinhTuyen`.
 
@@ -85,6 +85,10 @@ Cách gom: mỗi tuyến bắt đầu từ xã ngoài cùng, lần lượt lấy
 | Địa chỉ không có phường/xã | "Chưa rõ phường xã" |
 | Đơn huỷ / không có | "Đơn đã huỷ" / "Không tìm thấy đơn" |
 
+**Bản đồ (Goong):** sau khi đọc tuyến, trang hiện bản đồ: 🔴 vị trí đơn, 🔵 các phường/xã của tuyến — nhìn là biết đơn có nằm trong vùng tuyến không. Vị trí đơn lấy bằng cách gửi địa chỉ đơn sang Goong (chỉ khi quét, mỗi đơn một lần), lưu cache ở sheet `toa_do_don` (xoá dòng để định vị lại). Nếu Goong không đặt được địa chỉ vào đúng quận/huyện thì dùng điểm của phường/xã. API chỉ trả toạ độ của đơn vừa quét, không trả danh sách.
+
+Key Goong: REST API key ở `gas/config.js` (`GOONG_API_KEY`, không đưa lên git); Maptiles key ở `web/config.js` (`goongMaptilesKey`, công khai — nên giới hạn tên miền trong trang quản trị Goong). Gói miễn phí Maptiles ~1.000 lượt tải bản đồ/tháng; bản đồ chỉ tải khi quét ở chế độ Tuyến.
+
 ## Cấu trúc
 
 ```
@@ -92,12 +96,15 @@ web/                  giao diện (GitHub Pages, deploy tự động khi push ma
   index.html, style.css
   config.js           URL API Apps Script (/exec)
   lookup.js           logic tra cứu phía client (được test bằng Node)
+  order-map.js        bản đồ Goong ở chế độ Tuyến (tải thư viện khi cần)
   app.js              điều khiển: tải dữ liệu, nhập liệu, camera, giọng nói
 gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
   Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
                       doPost: ghi mã vào data_don (writeScan)
   routes.js           taoCauHinhTuyen / boSungTuyen: gom phường/xã thành tuyến (config_tuyen)
+  goong.js            gọi Goong geocode (kiểm tra đúng quận/huyện)
+  locate.js           ?action=locate&code=: toạ độ một đơn cho bản đồ (cache toa_do_don)
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages

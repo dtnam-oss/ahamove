@@ -23,6 +23,7 @@ function gridSheet(values) {
     getLastRow: () => values.length,
     setFrozenRows() {},
     getRange: (row, col, numRows, numCols) => ({
+      setNumberFormat() { return this; },
       setValues(v) {
         assert.equal(v.length, numRows);
         v.forEach((r, i) => { assert.equal(r.length, numCols); values[row - 1 + i] = r.slice(); });
@@ -34,7 +35,9 @@ function gridSheet(values) {
 
 /**
  * Fake SpreadsheetApp over `tables` (sheet name -> 2D display values, or a fake sheet object).
- * `geo` maps the first part of a geocoding query (ward or district name) to {lat, lng}.
+ * `geo` maps the first part of a Goong geocoding query (the street part of a full address, or a bare
+ * ward name) to {lat, lng, district, commune} - Goong's location + `compound`; `geo.httpStatus` forces
+ * an HTTP error. Queried addresses are recorded in ctx.geocoded.
  */
 function loadServer(tables, geo = {}) {
   const spreadsheet = {
@@ -45,15 +48,22 @@ function loadServer(tables, geo = {}) {
     },
     insertSheet: (name) => { tables[name] = []; return gridSheet(tables[name]); },
   };
-  const Maps = {
-    newGeocoder: () => ({
-      setRegion() { return this; },
-      setLanguage() { return this; },
-      geocode: (query) => {
-        const point = geo[query.split(',')[0].trim()];
-        return point ? { status: 'OK', results: [{ geometry: { location: point } }] } : { status: 'ZERO_RESULTS', results: [] };
-      },
-    }),
+  const geocoded = [];
+  const goong = (url) => {
+    const u = new URL(url);
+    assert.equal(u.origin + u.pathname, 'https://rsapi.goong.io/geocode');
+    assert.equal(u.searchParams.get('api_key'), 'test-key');
+    const address = u.searchParams.get('address');
+    geocoded.push(address);
+    const point = geo[address.split(',')[0].trim()];
+    const body = point
+      ? { status: 'OK', results: [{ geometry: { location: { lat: point.lat, lng: point.lng } }, compound: { district: point.district, commune: point.commune, province: 'Hà Nội' } }] }
+      : { status: 'OK', results: [] };
+    return { getResponseCode: () => geo.httpStatus || 200, getContentText: () => JSON.stringify(body) };
+  };
+  const UrlFetchApp = {
+    fetch: goong,
+    fetchAll: (requests) => requests.map((r) => { assert.equal(r.muteHttpExceptions, true); return goong(r.url); }),
   };
   const Utilities = { sleep() {} };
   const ContentService = {
@@ -62,11 +72,13 @@ function loadServer(tables, geo = {}) {
   };
   const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
   const ctx = vm.createContext({
-    SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, Maps, Utilities, console,
+    SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, UrlFetchApp, Utilities, console, geocoded,
   });
-  vm.runInContext(read('gas/config.example.js'), ctx);
+  vm.runInContext(read('gas/config.example.js').replace("GOONG_API_KEY = ''", "GOONG_API_KEY = 'test-key'"), ctx);
   vm.runInContext(read('gas/Code.js'), ctx);
   vm.runInContext(read('gas/routes.js'), ctx);
+  vm.runInContext(read('gas/goong.js'), ctx);
+  vm.runInContext(read('gas/locate.js'), ctx);
   return ctx;
 }
 
@@ -464,8 +476,9 @@ test('clusterWards_: an oversized ward stands alone; small routes stay when noth
 test('taoCauHinhTuyen builds config_tuyen and default settings from raw_data', () => {
   const tables = { raw_data: DATA, config: CONFIG };
   const server = loadServer(tables, {
-    'Xã Tả Thanh Oai': { lat: 20.93, lng: 105.8 },
-    'Huyện Quốc Oai': { lat: 20.99, lng: 105.64 }, // ward not found -> district centre fallback
+    'Số 1 Ngõ A': { lat: 20.93, lng: 105.8, district: 'Thanh Trì', commune: 'Tả Thanh Oai' },
+    'Số 2 Ngõ B': { lat: 21.5, lng: 106.1, district: 'Hiệp Hoà', commune: 'X' }, // wrong district: rejected
+    'Liệp Nghĩa': { lat: 20.98, lng: 105.62, district: 'Quốc Oai', commune: 'Liệp Nghĩa' }, // bare-name fallback
   });
   const msg = server.taoCauHinhTuyen();
   assert.match(msg, /Tạo 2 xã vào 1 tuyến/); // 2 orders in total: one route, flagged as under the minimum
@@ -474,6 +487,13 @@ test('taoCauHinhTuyen builds config_tuyen and default settings from raw_data', (
   const body = tables.config_tuyen.slice(1);
   assert.deepEqual(body.map((r) => r[1]).sort(), ['Xã Liệp Nghĩa', 'Xã Tả Thanh Oai']);
   assert.ok(body.every((r) => r[0] === 'Tuyến 1'));
+  assert.deepEqual([...body.find((r) => r[1] === 'Xã Liệp Nghĩa').slice(3, 5)], [20.98, 105.62]);
+  assert.deepEqual([...server.geocoded].sort(), [
+    'Liệp Nghĩa, Quốc Oai, Hà Nội', // only after its address landed in the wrong district
+    'Số 1 Ngõ A, Xã Tả Thanh Oai, Huyện Thanh Trì, Hà Nội',
+    'Số 2 Ngõ B, Phường Mới, Xã Liệp Nghĩa, Huyện Quốc Oai, Hà Nội',
+  ]);
+  assert.deepEqual(tables.toa_do_don.slice(1).map((r) => [...r]), [['GYEGFF9C', 20.93, 105.8, 'dia_chi']]); // map cache
   assert.deepEqual(tables.cai_dat_tuyen.slice(1).map((r) => [r[0], r[1]]), [['so_don_toi_thieu_moi_tuyen', 30], ['so_don_toi_da_moi_tuyen', 45]]);
   assert.throws(() => server.taoCauHinhTuyen(), /đã có 2 dòng/); // never overwrites
 });
@@ -486,7 +506,7 @@ test('boSungTuyen adds only new wards, keeps existing rows, lists ungeocoded one
   const routes = ROUTES.slice(0, 3).map((r) => r.slice());
   const settings = [['ten', 'gia_tri'], ['so_don_toi_thieu_moi_tuyen', '1'], ['so_don_toi_da_moi_tuyen', '45']];
   const tables = { raw_data: data, config: CONFIG, config_tuyen: routes, cai_dat_tuyen: settings };
-  const server = loadServer(tables, { 'Xã Vĩnh Quỳnh': { lat: 20.95, lng: 105.81 } }); // closest to Tuyến 1
+  const server = loadServer(tables, { 'Số 9': { lat: 20.95, lng: 105.81, district: 'Thanh Trì', commune: 'Vĩnh Quỳnh' } }); // closest to Tuyến 1
   const msg = server.boSungTuyen();
   assert.match(msg, /^Bổ sung 1 xã vào 1 tuyến\. 1 xã không tìm được toạ độ.*Xã Xa Lạ/);
   assert.deepEqual(tables.config_tuyen.slice(0, 3), ROUTES.slice(0, 3));
@@ -499,7 +519,7 @@ test('boSungTuyen opens a new route numbered after the highest one when every ro
   const data = DATA.concat([['2026-11-11', 'NEW00003', 'ghn', 'ASSIGNING', 'Huyện Ba Vì', 'Xã Ba Trại, Huyện Ba Vì, Hà Nội']]);
   const full = ROUTES.slice(0, 3).map((r, i) => (i ? [...r.slice(0, 5), '45'] : r.slice()));
   const tables = { raw_data: data, config: CONFIG, config_tuyen: full };
-  const server = loadServer(tables, { 'Xã Ba Trại': { lat: 21.1, lng: 105.35 } });
+  const server = loadServer(tables, { 'Xã Ba Trại': { lat: 21.1, lng: 105.35, district: 'Ba Vì', commune: 'Ba Trại' } });
   server.boSungTuyen();
   assert.deepEqual([...tables.config_tuyen[3].slice(0, 2)], ['Tuyến 3', 'Xã Ba Trại']);
 });
@@ -515,17 +535,73 @@ test('route settings: missing keys are added with defaults; invalid values are r
   assert.throws(bad([['so_don_toi_thieu_moi_tuyen', '50'], ['so_don_toi_da_moi_tuyen', '40']]), /phải ≥ so_don_toi_thieu_moi_tuyen/);
 });
 
-test('a ward geocoded far from its own district falls back to the district centre', () => {
+test('ward point = median of its order points; bare-name fallback must match ward and district', () => {
   const wards = [
-    { key: 'a', phuong_xa: 'Xã Tam Hiệp', quan_huyen: 'Huyện Thanh Trì', city: 'Hà Nội', so_don: 1 },
-    { key: 'b', phuong_xa: 'Xã Vĩnh Quỳnh', quan_huyen: 'Huyện Thanh Trì', city: 'Hà Nội', so_don: 1 },
+    { key: 'a', phuong_xa: 'Xã Vĩnh Quỳnh', quan_huyen: 'Huyện Thanh Trì', city: 'Hà Nội', so_don: 3,
+      samples: [{ code: 'A1', address: 'A1, Xã Vĩnh Quỳnh' }, { code: 'A2', address: 'A2, Xã Vĩnh Quỳnh' }, { code: 'A3', address: 'A3, Xã Vĩnh Quỳnh' }] },
+    { key: 'b', phuong_xa: 'Xã Tam Hiệp', quan_huyen: 'Huyện Thanh Trì', city: 'Hà Nội', so_don: 1, samples: [{ code: 'B1', address: 'B1, Xã Tam Hiệp' }] },
   ];
   const geo = {
-    'Huyện Thanh Trì': { lat: 20.94, lng: 105.84 },
-    'Xã Tam Hiệp': { lat: 21.085, lng: 105.626 }, // the Tam Hiệp in Phúc Thọ, ~27 km away
-    'Xã Vĩnh Quỳnh': { lat: 20.95, lng: 105.81 },
+    A1: { lat: 20.94, lng: 105.80, district: 'Thanh Trì' },
+    A2: { lat: 20.96, lng: 105.82, district: 'Thanh Trì' },
+    A3: { lat: 20.95, lng: 105.90, district: 'Thanh Trì' },
+    'Tam Hiệp': { lat: 21.085, lng: 105.626, district: 'Phúc Thọ', commune: 'Tam Hiệp' }, // the other Tam Hiệp
   };
-  const located = loadServer({}, geo).locateWards_(wards).located;
-  assert.deepEqual([located[0].lat, located[0].lng], [20.94, 105.84]);
-  assert.deepEqual([located[1].lat, located[1].lng], [20.95, 105.81]);
+  const r = loadServer({}, geo).locateWards_(wards);
+  assert.deepEqual([r.located[0].lat, r.located[0].lng], [20.95, 105.82]);
+  assert.deepEqual([...r.unlocated.map((w) => w.phuong_xa)], ['Xã Tam Hiệp']); // left for manual entry
+  assert.deepEqual([...r.orderPoints.map((p) => p.code)], ['A1', 'A2', 'A3']);
+});
+
+// ---------- Goong: order location for the map (GET ?action=locate) ----------
+
+const ROUTES_WITH_POINTS = [
+  ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_don'],
+  ['Tuyến 1', 'Xã Tả Thanh Oai', 'Huyện Thanh Trì', '20,93', '105,8', '1'],
+  ['Tuyến 1', 'Xã Vĩnh Quỳnh', 'Huyện Thanh Trì', '20,95', '105,81', '1'],
+  ['Tuyến 2', 'Xã Liệp Nghĩa', 'Huyện Quốc Oai', '20,98', '105,62', '1'],
+];
+
+test('payload route rows carry ward points; Lookup groups them per route', () => {
+  const payload = loadServer({ raw_data: DATA, config: CONFIG, config_tuyen: ROUTES_WITH_POINTS }).getLookupData();
+  assert.deepEqual({ ...payload.routes[0] }, { ten_tuyen: 'Tuyến 1', phuong_xa: 'Xã Tả Thanh Oai', quan_huyen: 'Huyện Thanh Trì', lat: 20.93, lng: 105.8 });
+  const Lookup = loadLookup();
+  const index = Lookup.buildIndex(payload);
+  assert.deepEqual([...Lookup.routeWardPoints('Tuyến 1', index).map((w) => w.phuong_xa)], ['Xã Tả Thanh Oai', 'Xã Vĩnh Quỳnh']);
+  assert.equal(Lookup.routeWardPoints('Tuyến 9', index).length, 0);
+});
+
+test('locateOrder geocodes the full address once, then serves it from toa_do_don', () => {
+  const tables = { raw_data: DATA, config: CONFIG, config_tuyen: ROUTES_WITH_POINTS };
+  const server = loadServer(tables, { 'Số 1 Ngõ A': { lat: 20.931, lng: 105.801, district: 'Thanh Trì' } });
+  const r = server.locateOrder(' gyegff9c ');
+  assert.deepEqual({ ...r }, { code: 'GYEGFF9C', lat: 20.931, lng: 105.801, nguon: 'dia_chi' });
+  assert.deepEqual([...server.geocoded], ['Số 1 Ngõ A, Xã Tả Thanh Oai, Huyện Thanh Trì, Hà Nội']);
+  assert.deepEqual([...tables.toa_do_don[0]], ['tracking_number', 'lat', 'lng', 'nguon']);
+  assert.deepEqual([...tables.toa_do_don[1]], ['GYEGFF9C', 20.931, 105.801, 'dia_chi']);
+  assert.deepEqual({ ...server.locateOrder('GYEGFF9C') }, { ...r });
+  assert.equal(server.geocoded.length, 1); // cached: no second Goong call
+  assert.equal(tables.toa_do_don.length, 2);
+});
+
+test('locateOrder falls back to the ward point when the address is not found or in another district', () => {
+  const far = loadServer({ raw_data: DATA, config: CONFIG, config_tuyen: ROUTES_WITH_POINTS }, { 'Số 1 Ngõ A': { lat: 10.97, lng: 106.75, district: 'Tân Uyên' } });
+  assert.deepEqual({ ...far.locateOrder('GYEGFF9C') }, { code: 'GYEGFF9C', lat: 20.93, lng: 105.8, nguon: 'phuong_xa' });
+  const none = loadServer({ raw_data: DATA, config: CONFIG, config_tuyen: ROUTES_WITH_POINTS }, {});
+  assert.equal(none.locateOrder('GYEGFF9C').nguon, 'phuong_xa');
+  assert.throws(() => none.locateOrder('AAAA1111'), /Không định vị được đơn AAAA1111/); // no address, no ward
+});
+
+test('locate endpoint: errors come back as {error}', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG }, {});
+  const call = (code) => JSON.parse(server.doGet({ parameter: { action: 'locate', code } }).text);
+  assert.match(call('=1+1').error, /Mã không hợp lệ/);
+  assert.match(call('ZZZZ9999').error, /Không tìm thấy đơn ZZZZ9999/);
+});
+
+test('Goong key problems stop the run instead of misplacing wards', () => {
+  const tables = { raw_data: DATA, config: CONFIG };
+  assert.throws(() => loadServer(tables, { httpStatus: 403 }).taoCauHinhTuyen(), /Goong từ chối API key \(HTTP 403\)/);
+  assert.equal(tables.config_tuyen, undefined);
+  assert.throws(() => loadServer(tables, { httpStatus: 429 }).locateOrder('GYEGFF9C'), /vượt hạn mức/);
 });

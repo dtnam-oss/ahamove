@@ -1,5 +1,6 @@
 // Backend of the order-sorting tool (Google Apps Script web app).
 // GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config.
+// GET ?action=locate&code=X returns the map point of one order (see locate.js).
 // POST {action:'write', cell, code} appends a scanned code to sheet `data_don` (see writeScan).
 // Customer PII (name, phone, address) never leaves the sheet.
 //
@@ -17,6 +18,7 @@ const APP_URL = 'https://dtnam-oss.github.io/ahamove/';
 function doGet(e) {
   const action = e && e.parameter && e.parameter.action;
   if (action === 'data') return jsonOutput_(safeLookupData_());
+  if (action === 'locate') return jsonOutput_(safely_(function () { return locateOrder(e.parameter.code); }));
 
   // Old links to this web app: point users to the hosted UI (top navigation needs a user click).
   return HtmlService.createHtmlOutput(
@@ -35,12 +37,16 @@ function jsonOutput_(obj) {
 }
 
 /** Errors are returned as {error} with HTTP 200 (ContentService cannot set status codes). */
-function safeLookupData_() {
+function safely_(fn) {
   try {
-    return getLookupData();
+    return fn();
   } catch (err) {
     return { error: String((err && err.message) || err) };
   }
+}
+
+function safeLookupData_() {
+  return safely_(getLookupData);
 }
 
 /** Read a tab as display strings; returns column-index lookup + data rows. */
