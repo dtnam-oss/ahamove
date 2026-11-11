@@ -15,6 +15,10 @@ const GOONG_BATCH = 5; // parallel requests per UrlFetchApp.fetchAll call
 const GOONG_PAUSE_MS = 1000; // between batches: about 5 requests per second
 const GOONG_RETRIES = 3; // per batch, on HTTP 429, with a growing pause
 const GOONG_RETRY_PAUSE_MS = 15000;
+// Apps Script stops a run after 6 minutes. Batch runs stop themselves before that, with their
+// progress saved, so the user can simply press Run again to continue.
+const GOONG_TIME_BUDGET_MS = 4.5 * 60 * 1000;
+let GOONG_STARTED_AT = Date.now(); // globals are evaluated at the start of every execution
 
 function goongKey_() {
   const key = typeof GOONG_API_KEY === 'string' ? GOONG_API_KEY.trim() : '';
@@ -37,7 +41,12 @@ function goongGeocodeMany_(queries, onBatch) {
   const key = goongKey_();
   const out = [];
   for (let start = 0; start < queries.length; start += GOONG_BATCH) {
-    if (start > 0) Utilities.sleep(GOONG_PAUSE_MS);
+    if (start > 0) {
+      if (Date.now() - GOONG_STARTED_AT > GOONG_TIME_BUDGET_MS) {
+        throw new Error('Sắp hết 6 phút giới hạn của Apps Script nên dừng lại. Kết quả đã lưu trong toa_do_don — bấm Run lần nữa để chạy tiếp.');
+      }
+      Utilities.sleep(GOONG_PAUSE_MS);
+    }
     const chunk = queries.slice(start, start + GOONG_BATCH);
     const requests = chunk.map(function (q) {
       return {
@@ -47,7 +56,18 @@ function goongGeocodeMany_(queries, onBatch) {
     });
     let responses;
     for (let attempt = 0; ; attempt++) {
-      responses = UrlFetchApp.fetchAll(requests);
+      try {
+        responses = UrlFetchApp.fetchAll(requests);
+      } catch (err) {
+        // Network failure (e.g. "Địa chỉ không khả dụng"). Its message contains the URL with the API
+        // key, so only the reason before the URL is kept.
+        const reason = String((err && err.message) || err).split(': http')[0];
+        if (attempt >= GOONG_RETRIES) {
+          throw new Error('Không kết nối được Goong (' + reason + ') sau ' + GOONG_RETRIES + ' lần thử lại. Kết quả đã có được lưu; chạy lại sau ít phút.');
+        }
+        Utilities.sleep(GOONG_RETRY_PAUSE_MS * (attempt + 1));
+        continue;
+      }
       const limited = responses.find(function (r) { return r.getResponseCode() === 429; });
       if (!limited) break;
       if (quotaLeft_(limited) === 0 || attempt >= GOONG_RETRIES) throw new Error(rateLimitMessage_(limited));

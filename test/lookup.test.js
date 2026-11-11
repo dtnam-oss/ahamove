@@ -71,7 +71,10 @@ function loadServer(tables, geo = {}) {
   };
   const UrlFetchApp = {
     fetch: goong,
-    fetchAll: (requests) => requests.map((r) => { assert.equal(r.muteHttpExceptions, true); return goong(r.url); }),
+    fetchAll: (requests) => {
+      if (geo.networkErrors > 0) { geo.networkErrors--; throw new Error('Địa chỉ không khả dụng: ' + requests[0].url); }
+      return requests.map((r) => { assert.equal(r.muteHttpExceptions, true); return goong(r.url); });
+    },
   };
   const Utilities = { sleep() {} };
   const ContentService = {
@@ -639,4 +642,22 @@ test('a run stopped by the quota keeps its order points; the rerun reuses them',
   rerun.taoCauHinhTuyen();
   assert.ok(rerun.geocoded.every((a) => !/^Nhà [0-2],|^Số 1 Ngõ A/.test(a)), 'cached orders are not geocoded again');
   assert.ok(tables.config_tuyen.length > 1);
+});
+
+test('Goong network failures are retried, and the final error never shows the API key', () => {
+  const geo = { networkErrors: 2, 'Số 1 Ngõ A': { lat: 20.931, lng: 105.801, district: 'Thanh Trì' } };
+  const server = loadServer({ raw_data: DATA, config: CONFIG, config_tuyen: ROUTES_WITH_POINTS }, geo);
+  assert.equal(server.locateOrder('GYEGFF9C').nguon, 'dia_chi');
+  const down = loadServer({ raw_data: DATA, config: CONFIG }, { networkErrors: 99 });
+  assert.throws(() => down.locateOrder('GYEGFF9C'), (err) =>
+    /Không kết nối được Goong \(Địa chỉ không khả dụng\) sau 3 lần/.test(err.message) && !err.message.includes('test-key'));
+});
+
+test('a long batch run stops itself before the 6-minute limit, keeping its progress', () => {
+  const server = loadServer({}, { 'Số 1 Ngõ A': { lat: 20.93, lng: 105.8, district: 'Thanh Trì' } });
+  vm.runInContext('GOONG_STARTED_AT = Date.now() - 10 * 60 * 1000', server); // pretend 10 minutes passed
+  const queries = [1, 2, 3, 4, 5, 6].map((i) => ({ address: 'Số 1 Ngõ A, x' + i, district: 'Thanh Trì' }));
+  let saved = 0;
+  assert.throws(() => server.goongGeocodeMany_(queries, (r) => { saved += r.length; }), /bấm Run lần nữa để chạy tiếp/);
+  assert.equal(saved, 5); // the first batch finished and was handed over before stopping
 });
