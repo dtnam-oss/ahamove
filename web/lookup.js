@@ -44,7 +44,20 @@ var Lookup = (function () {
         backlog.set(normalizeCode(code), payload.backlog[code]);
       });
     }
-    return { orders: orders, areas: areas, backlog: backlog };
+    var routes = null;
+    if (payload.routes) {
+      routes = new Map();
+      payload.routes.forEach(function (row) {
+        var key = wardKey(row.phuong_xa, row.quan_huyen);
+        if (!routes.has(key)) routes.set(key, row.ten_tuyen); // first config row wins
+      });
+    }
+    return { orders: orders, areas: areas, backlog: backlog, routes: routes };
+  }
+
+  /** Ward + district identify a ward (the same ward name exists in several districts). */
+  function wardKey(ward, district) {
+    return normalizeText(ward) + '|' + normalizeText(district);
   }
 
   /** Exact match first; otherwise any alphanumeric token of the scan (QR may hold a URL/long string). */
@@ -96,6 +109,30 @@ var Lookup = (function () {
     return { status: overdue ? 'overdue' : 'ok', code: code, days: days, speech: days + ' ngày' };
   }
 
+  /**
+   * Route mode (sheet config_tuyen): speak "<ten_tuyen>, <phường/xã>", e.g. "Tuyến 3, Xã Đại Đồng".
+   * status: 'empty' | 'unavailable' | 'not_found' | 'cancelled' | 'no_ward' | 'unmapped' | 'ok'.
+   */
+  function resolveRoute(raw, index) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    if (!index.routes) return { status: 'unavailable', speech: 'Chưa có cấu hình tuyến' };
+    var code = findCode(raw, index.orders);
+    if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không tìm thấy đơn' };
+
+    var order = index.orders.get(code) || {};
+    if (isCancelled(order.status)) return { status: 'cancelled', code: code, speech: 'Đơn đã huỷ' };
+
+    var ward = String(order.ward || '').trim();
+    var district = String(order.district || '').trim();
+    if (!ward) return { status: 'no_ward', code: code, district: district, speech: 'Chưa rõ phường xã' };
+
+    var route = index.routes.get(wardKey(ward, district));
+    if (!route) {
+      return { status: 'unmapped', code: code, ward: ward, district: district, speech: 'Chưa có tuyến, ' + ward };
+    }
+    return { status: 'ok', code: code, ward: ward, district: district, route: route, speech: route + ', ' + ward };
+  }
+
   /** " c3 " -> "C3"; anything that is not a single A1 cell -> "". */
   function normalizeCell(value) {
     var cell = String(value == null ? '' : value).replace(/\s+/g, '').toUpperCase();
@@ -116,6 +153,7 @@ var Lookup = (function () {
     findCode: findCode,
     resolveScan: resolveScan,
     resolveBacklog: resolveBacklog,
+    resolveRoute: resolveRoute,
     normalizeCell: normalizeCell,
     nextCell: nextCell,
   };

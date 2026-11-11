@@ -1,5 +1,5 @@
 // Backend of the order-sorting tool (Google Apps Script web app).
-// GET ?action=data returns a minimal lookup payload: order code -> district + location config.
+// GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config.
 // POST {action:'write', cell, code} appends a scanned code to sheet `data_don` (see writeScan).
 // Customer PII (name, phone, address) never leaves the sheet.
 //
@@ -55,7 +55,7 @@ function readTable_(spreadsheet, name, requiredColumns) {
     col[c] = header.indexOf(c);
     if (col[c] < 0) throw new Error('Sheet "' + name + '" thiếu cột ' + c);
   });
-  return { col: col, rows: values.slice(1) };
+  return { col: col, header: header, rows: values.slice(1) };
 }
 
 /** Build the lookup payload (served by doGet ?action=data). */
@@ -65,13 +65,16 @@ function getLookupData() {
   const data = readTable_(ss, DATA_SHEET, ['tracking_number', 'status', 'district']);
   const conf = readTable_(ss, CONFIG_SHEET, ['ten_vi_tri', 'khu_vuc']);
 
-  // orders: code -> { district, status }. Status is passed raw; the client owns the cancel rule.
+  // orders: code -> { district, ward, status }. Status is passed raw; the client owns the cancel rule.
+  // ward is parsed from the address (dropoff, optional); the address itself never leaves the sheet.
+  const dropoff = data.header.indexOf('dropoff');
   const orders = {};
   data.rows.forEach(function (r) {
     const code = String(r[data.col.tracking_number]).trim().toUpperCase();
     if (!code) return;
     orders[code] = {
       district: String(r[data.col.district]).trim(),
+      ward: dropoff < 0 ? '' : parseWard_(r[dropoff]),
       status: String(r[data.col.status]).trim(),
     };
   });
@@ -88,6 +91,7 @@ function getLookupData() {
   });
 
   const backlog = readBacklog_(ss);
+  const routes = readRoutes_(ss); // see routes.js
 
   return {
     updatedAt: new Date().toISOString(),
@@ -96,6 +100,8 @@ function getLookupData() {
     config: config,
     backlog: backlog.days, // code -> days left (display string), or null when back_log is unreadable
     backlogError: backlog.error,
+    routes: routes.routes, // [{ten_tuyen, phuong_xa, quan_huyen}] from config_tuyen, or null when unreadable
+    routesError: routes.error,
   };
 }
 

@@ -1,6 +1,7 @@
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
 // "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan)
-// and "Backlog" mode (speak the days left to the deadline from sheet back_log).
+// "Backlog" mode (speak the days left to the deadline from sheet back_log)
+// and "Tuyến" mode (speak the delivery route of the order's ward from sheet config_tuyen).
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var els = {
@@ -32,7 +33,7 @@
   var lastCamera = { text: '', at: 0 };
   var CAMERA_REPEAT_MS = 2500; // ignore the same code re-read by the live camera within this window
 
-  var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don | 'backlog' = days left
+  var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don | 'backlog' = days left | 'route' = route
   var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
   var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
 
@@ -82,7 +83,8 @@
         index = Lookup.buildIndex(body);
         var time = new Date(body.updatedAt).toLocaleTimeString('vi-VN');
         var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
-        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · cập nhật ' + time;
+        var routeInfo = body.routes ? countRoutes(body.routes) + ' tuyến' : 'tuyến lỗi: ' + body.routesError;
+        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · cập nhật ' + time;
       })
       .catch(function (err) {
         var msg = (err && err.message) || String(err);
@@ -108,6 +110,7 @@
     if (mode === 'write') { queueWrite(raw); return; }
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
+    if (mode === 'route') { handleRoute(raw); return; }
     var r = Lookup.resolveScan(raw, index);
     if (r.status === 'empty') return;
     if (r.status === 'ok') showResult(r.status, r.location, r.district, r.code);
@@ -185,7 +188,7 @@
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
     });
     els.writePanel.hidden = mode !== 'write';
-    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog' };
+    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog', route: 'Chế độ đọc tuyến theo phường/xã' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
   }
@@ -210,6 +213,24 @@
     else if (r.status === 'no_days') showResult(r.status, 'Chưa có số ngày', 'Cột "Còn lại (ngày)" đang trống', r.code);
     else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu backlog', els.status.textContent);
     else showResult(r.status, 'Không có trong backlog', '', r.input);
+    speak(r.speech);
+  }
+
+  function countRoutes(rows) {
+    var names = {};
+    rows.forEach(function (r) { names[r.ten_tuyen] = true; });
+    return Object.keys(names).length;
+  }
+
+  function handleRoute(raw) {
+    var r = Lookup.resolveRoute(raw, index);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') showResult(r.status, r.route, r.ward + ' · ' + r.district, r.code);
+    else if (r.status === 'cancelled') showResult(r.status, 'Đơn đã huỷ', '', r.code);
+    else if (r.status === 'no_ward') showResult(r.status, 'Chưa rõ phường/xã', 'Địa chỉ không có phường/xã', r.code);
+    else if (r.status === 'unmapped') showResult(r.status, 'Chưa có tuyến', r.ward + ' · ' + r.district + ' — chạy boSungTuyen()', r.code);
+    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có cấu hình tuyến', els.status.textContent);
+    else showResult(r.status, 'Không tìm thấy đơn', '', r.input);
     speak(r.speech);
   }
 

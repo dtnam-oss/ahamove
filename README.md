@@ -56,6 +56,33 @@ Bấm **Backlog** rồi quét: tra mã trong sheet `back_log`, cột **"Còn l�
 
 `back_log` được tải cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). Cột được tìm theo đúng tên tiêu đề — đổi tên cột thì thanh trạng thái báo "backlog lỗi", các chế độ khác vẫn chạy.
 
+## Chế độ Tuyến (chia tuyến theo phường/xã)
+
+Bấm **Tuyến** rồi quét: lấy phường/xã trong địa chỉ (cột `dropoff` của `raw_data`), tra sheet `config_tuyen` và đọc to `<tuyến>, <phường/xã>` (vd "Tuyến 3, Xã Đại Đồng").
+
+**Tạo cấu hình tuyến** — mở project Apps Script (`clasp open-script`), chọn hàm rồi bấm **Run**:
+
+| Hàm | Khi nào | Làm gì |
+|---|---|---|
+| `taoCauHinhTuyen` | Lần đầu | Lấy toạ độ từng phường/xã (Google Maps, chỉ gửi tên xã/huyện), gom các xã gần nhau thành Tuyến 1, 2, … ghi vào `config_tuyen`. Không chạy nếu sheet đã có dữ liệu. |
+| `boSungTuyen` | Khi có xã mới | Chỉ thêm xã chưa có: vào tuyến gần nhất còn chỗ, nếu không thì mở tuyến mới. Không sửa dòng cũ. |
+
+Giới hạn chỉnh trong sheet `cai_dat_tuyen` (tự tạo lần chạy đầu):
+
+| ten | Mặc định | Ý nghĩa |
+|---|---|---|
+| `so_don_toi_da_moi_tuyen` | 30 | Tổng đơn tối đa một tuyến (đếm theo `raw_data` lúc chạy) |
+| `khoang_cach_toi_da_km` | 5 | Hai phường/xã bất kỳ trong cùng tuyến cách nhau không quá số km này |
+
+`config_tuyen` (`ten_tuyen, phuong_xa, quan_huyen, lat, lng, so_don`) sửa tay được — đổi `ten_tuyen` để chuyển xã sang tuyến khác. Xã không tìm được toạ độ được ghi với `ten_tuyen` trống để điền tay. Muốn tạo lại từ đầu: xoá sheet `config_tuyen` rồi chạy `taoCauHinhTuyen`.
+
+| Trường hợp | Giọng đọc |
+|---|---|
+| Có tuyến | "Tuyến 3, Xã Đại Đồng" |
+| Xã chưa có trong `config_tuyen` | "Chưa có tuyến, Xã …" → chạy `boSungTuyen` |
+| Địa chỉ không có phường/xã | "Chưa rõ phường xã" |
+| Đơn huỷ / không có | "Đơn đã huỷ" / "Không tìm thấy đơn" |
+
 ## Cấu trúc
 
 ```
@@ -68,6 +95,7 @@ gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
   Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
                       doPost: ghi mã vào data_don (writeScan)
+  routes.js           taoCauHinhTuyen / boSungTuyen: gom phường/xã thành tuyến (config_tuyen)
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages

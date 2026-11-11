@@ -15,23 +15,58 @@ function loadLookup() {
   return ctx.Lookup;
 }
 
-/** Fake SpreadsheetApp returning given 2D display values per sheet name (or a fake sheet object). */
-function loadServer(tables) {
+/** Sheet backed by a 2D array (read as display strings, writable through getRange().setValues()). */
+function gridSheet(values) {
+  return {
+    values,
+    getDataRange: () => ({ getDisplayValues: () => values.map((r) => r.map((v) => String(v))) }),
+    getLastRow: () => values.length,
+    setFrozenRows() {},
+    getRange: (row, col, numRows, numCols) => ({
+      setValues(v) {
+        assert.equal(v.length, numRows);
+        v.forEach((r, i) => { assert.equal(r.length, numCols); values[row - 1 + i] = r.slice(); });
+        return this;
+      },
+    }),
+  };
+}
+
+/**
+ * Fake SpreadsheetApp over `tables` (sheet name -> 2D display values, or a fake sheet object).
+ * `geo` maps the first part of a geocoding query (ward or district name) to {lat, lng}.
+ */
+function loadServer(tables, geo = {}) {
   const spreadsheet = {
     getSheetByName: (name) => {
       const t = tables[name];
       if (!t) return null;
-      return Array.isArray(t) ? { getDataRange: () => ({ getDisplayValues: () => t }) } : t;
+      return Array.isArray(t) ? gridSheet(t) : t;
     },
+    insertSheet: (name) => { tables[name] = []; return gridSheet(tables[name]); },
   };
+  const Maps = {
+    newGeocoder: () => ({
+      setRegion() { return this; },
+      setLanguage() { return this; },
+      geocode: (query) => {
+        const point = geo[query.split(',')[0].trim()];
+        return point ? { status: 'OK', results: [{ geometry: { location: point } }] } : { status: 'ZERO_RESULTS', results: [] };
+      },
+    }),
+  };
+  const Utilities = { sleep() {} };
   const ContentService = {
     MimeType: { JSON: 'json' },
     createTextOutput: (text) => ({ text, setMimeType(m) { this.mime = m; return this; } }),
   };
   const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
-  const ctx = vm.createContext({ SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService });
+  const ctx = vm.createContext({
+    SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, Maps, Utilities, console,
+  });
   vm.runInContext(read('gas/config.example.js'), ctx);
   vm.runInContext(read('gas/Code.js'), ctx);
+  vm.runInContext(read('gas/routes.js'), ctx);
   return ctx;
 }
 
@@ -39,8 +74,8 @@ function loadServer(tables) {
 // dropoff is the customer address and must never reach the payload.
 const DATA = [
   ['date', 'tracking_number', 'partner', 'status', 'district', 'dropoff'],
-  ['2026-11-10', 'GYEGFF9C', 'ghn', 'TRANSPORTING', 'Huyện Thanh Trì', 'Số 1 Ngõ A'],
-  ['2026-11-10', ' gyegffye ', 'ghn', 'ASSIGNING', 'Huyện Quốc Oai', 'Số 2 Ngõ B'],
+  ['2026-11-10', 'GYEGFF9C', 'ghn', 'TRANSPORTING', 'Huyện Thanh Trì', 'Số 1 Ngõ A, Xã Tả Thanh Oai, Huyện Thanh Trì, Hà Nội'],
+  ['2026-11-10', ' gyegffye ', 'ghn', 'ASSIGNING', 'Huyện Quốc Oai', 'Số 2 Ngõ B, Phường Mới, Xã Liệp Nghĩa, Huyện Quốc Oai, Hà Nội'],
   ['2026-11-10', 'AAAA1111', 'ghn', 'ACCEPTED', 'Huyện Ứng Hoà', ''], // old-style tone placement
   ['2026-11-10', 'BBBB2222', 'ghn', 'FAILED', '', ''],
   ['2026-11-10', 'CCCC3333', 'ghn', 'NEED_RETURN_TO_PARTNER_ASAP', 'Huyện Thanh Trì', ''],
@@ -317,4 +352,156 @@ test('backlog: not listed, empty days, QR payload, no back_log data', () => {
   assert.equal(Lookup.resolveBacklog('  ', index).status, 'empty');
   const noBacklog = Lookup.buildIndex({ orders: {}, config: [], backlog: null });
   assert.equal(Lookup.resolveBacklog('GYEGFF9C', noBacklog).status, 'unavailable');
+});
+
+// ---------- Route mode: sheet config_tuyen (wards grouped into routes) ----------
+
+const ROUTES = [
+  ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_don'],
+  ['Tuyến 1', 'Xã Tả Thanh Oai', 'Huyện Thanh Trì', '20.93', '105.80', '1'],
+  ['Tuyến 2', 'Xã Liệp Nghĩa', 'Huyện Quốc Oai', '20.98', '105.62', '1'],
+  ['', 'Xã Không Toạ Độ', 'Huyện Quốc Oai', '', '', '1'], // not yet routed by the user
+];
+
+function routeSetup(routes = ROUTES) {
+  const payload = loadServer({ raw_data: DATA, config: CONFIG, config_tuyen: routes }).getLookupData();
+  const Lookup = loadLookup();
+  return { payload, Lookup, index: Lookup.buildIndex(payload) };
+}
+
+test('parseWard_ takes the last ward-level part of the address', () => {
+  const server = loadServer({});
+  assert.equal(server.parseWard_('Số 1 Ngõ A, Xã Đại Đồng, Huyện Thạch Thất, Hà Nội'), 'Xã Đại Đồng');
+  assert.equal(server.parseWard_('12 Phường Mới, Phường  Ngọc Hà, Quận Ba Đình, Hà Nội'), 'Phường Ngọc Hà');
+  assert.equal(server.parseWard_('Khu 3, Thị trấn Liên Quan, Huyện Thạch Thất, Hà Nội'), 'Thị trấn Liên Quan');
+  assert.equal(server.parseWard_('Số 5, Thị xã Sơn Tây, Hà Nội'), ''); // town (district level) is not a ward
+  assert.equal(server.parseWard_(''), '');
+});
+
+test('payload carries ward per order and config_tuyen routes, never the address', () => {
+  const { payload } = routeSetup();
+  assert.equal(payload.orders.GYEGFF9C.ward, 'Xã Tả Thanh Oai');
+  assert.equal(payload.orders.GYEGFFYE.ward, 'Xã Liệp Nghĩa');
+  assert.equal(payload.orders.AAAA1111.ward, '');
+  assert.equal(payload.routes.length, 2); // rows without ten_tuyen are not routes
+  assert.equal(payload.routesError, '');
+  const json = JSON.stringify(payload);
+  assert.ok(!json.includes('Ngõ') && !json.includes('Số 1'));
+});
+
+test('missing config_tuyen does not break the other modes', () => {
+  const payload = loadServer({ raw_data: DATA, config: CONFIG }).getLookupData();
+  assert.equal(payload.routes, null);
+  assert.match(payload.routesError, /Không tìm thấy sheet "config_tuyen"/);
+  assert.equal(payload.orderCount, 6);
+  const Lookup = loadLookup();
+  assert.equal(Lookup.resolveRoute('GYEGFF9C', Lookup.buildIndex(payload)).status, 'unavailable');
+});
+
+test('route scan speaks "<tuyến>, <phường/xã>"', () => {
+  const { Lookup, index } = routeSetup();
+  const r = Lookup.resolveRoute(' gyegff9c ', index);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.speech, 'Tuyến 1, Xã Tả Thanh Oai');
+  assert.equal(Lookup.resolveRoute('https://x.vn/t?code=GYEGFFYE', index).speech, 'Tuyến 2, Xã Liệp Nghĩa');
+});
+
+test('route scan: tone/case variants of the ward still match', () => {
+  const rows = ROUTES.map((r) => r.slice());
+  rows[1][1] = 'xã tả thanh oai';
+  rows[1][2] = 'HUYỆN THANH TRÌ';
+  const { Lookup, index } = routeSetup(rows);
+  assert.equal(Lookup.resolveRoute('GYEGFF9C', index).route, 'Tuyến 1');
+});
+
+test('route scan: not found, cancelled, no ward, ward without route', () => {
+  const { Lookup, index } = routeSetup();
+  assert.equal(Lookup.resolveRoute('ZZZZ9999', index).speech, 'Không tìm thấy đơn');
+  assert.equal(Lookup.resolveRoute('CCCC3333', index).speech, 'Đơn đã huỷ');
+  assert.equal(Lookup.resolveRoute('AAAA1111', index).status, 'no_ward');
+  const { Lookup: L2, index: i2 } = routeSetup(ROUTES.slice(0, 2)); // only Tuyến 1 configured
+  const r = L2.resolveRoute('GYEGFFYE', i2);
+  assert.equal(r.status, 'unmapped');
+  assert.equal(r.speech, 'Chưa có tuyến, Xã Liệp Nghĩa');
+  assert.equal(Lookup.resolveRoute(' ', index).status, 'empty');
+});
+
+// Points ~1 km apart along a line of latitude (0.009 deg lat ~ 1 km).
+const ward = (name, km, orders) => ({ key: name, phuong_xa: name, quan_huyen: 'H', lat: 21 + km * 0.009, lng: 105.8, so_don: orders });
+const routesOf = (rows) => rows.reduce((m, r) => ({ ...m, [r.ten_tuyen]: [...(m[r.ten_tuyen] || []), r.phuong_xa] }), {});
+
+test('clusterWards_: any two wards of a route are within khoang_cach_toi_da_km', () => {
+  const server = loadServer({});
+  const wards = [ward('A', 0, 2), ward('B', 2, 2), ward('C', 4, 2), ward('D', 6, 2), ward('E', 8, 2), ward('F', 30, 2)];
+  const settings = { so_don_toi_da_moi_tuyen: 100, khoang_cach_toi_da_km: 5 };
+  const rows = server.clusterWards_(wards, settings, 1);
+  assert.equal(rows.length, 6);
+  const byRoute = {};
+  rows.forEach((r) => (byRoute[r.ten_tuyen] ||= []).push(r));
+  Object.values(byRoute).forEach((members) => {
+    members.forEach((a) => members.forEach((b) => assert.ok(server.distanceKm_(a, b) <= 5.0001, `${a.phuong_xa}-${b.phuong_xa}`)));
+  });
+  assert.deepEqual(routesOf(rows)['Tuyến 1'], ['F']); // the far outlier is not merged into a nearby route
+});
+
+test('clusterWards_: order limit per route; an oversized ward stands alone', () => {
+  const server = loadServer({});
+  const wards = [ward('A', 0, 10), ward('B', 0.5, 10), ward('C', 1, 10), ward('D', 1.5, 40)];
+  const rows = server.clusterWards_(wards, { so_don_toi_da_moi_tuyen: 20, khoang_cach_toi_da_km: 5 }, 1);
+  const routes = Object.values(routesOf(rows));
+  assert.equal(rows.length, 4);
+  routes.forEach((names) => {
+    const load = names.reduce((s, n) => s + wards.find((w) => w.phuong_xa === n).so_don, 0);
+    assert.ok(load <= 20 || names.length === 1);
+  });
+  assert.ok(routes.some((names) => names.length === 1 && names[0] === 'D'));
+});
+
+test('taoCauHinhTuyen builds config_tuyen and default settings from raw_data', () => {
+  const tables = { raw_data: DATA, config: CONFIG };
+  const server = loadServer(tables, {
+    'Xã Tả Thanh Oai': { lat: 20.93, lng: 105.8 },
+    'Huyện Quốc Oai': { lat: 20.99, lng: 105.64 }, // ward not found -> district centre fallback
+  });
+  const msg = server.taoCauHinhTuyen();
+  assert.match(msg, /Tạo 2 xã vào 2 tuyến/);
+  assert.deepEqual([...tables.config_tuyen[0]], ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_don']);
+  const body = tables.config_tuyen.slice(1);
+  assert.deepEqual(body.map((r) => r[1]).sort(), ['Xã Liệp Nghĩa', 'Xã Tả Thanh Oai']);
+  assert.ok(body.every((r) => /^Tuyến \d+$/.test(r[0])));
+  assert.equal(tables.cai_dat_tuyen[1][0], 'so_don_toi_da_moi_tuyen');
+  assert.equal(tables.cai_dat_tuyen[2][0], 'khoang_cach_toi_da_km');
+  assert.equal(tables.cai_dat_tuyen[2][1], 5);
+  assert.throws(() => server.taoCauHinhTuyen(), /đã có 2 dòng/); // never overwrites
+});
+
+test('boSungTuyen adds only new wards, keeps existing rows, lists ungeocoded ones', () => {
+  const data = DATA.concat([
+    ['2026-11-11', 'NEW00001', 'ghn', 'ASSIGNING', 'Huyện Thanh Trì', 'Số 9, Xã Vĩnh Quỳnh, Huyện Thanh Trì, Hà Nội'],
+    ['2026-11-11', 'NEW00002', 'ghn', 'ASSIGNING', 'Huyện Sóc Sơn', 'Thôn 1, Xã Xa Lạ, Huyện Sóc Sơn, Hà Nội'],
+  ]);
+  const routes = ROUTES.slice(0, 3).map((r) => r.slice());
+  const settings = [['ten', 'gia_tri'], ['so_don_toi_da_moi_tuyen', '30'], ['khoang_cach_toi_da_km', '5']];
+  const tables = { raw_data: data, config: CONFIG, config_tuyen: routes, cai_dat_tuyen: settings };
+  const server = loadServer(tables, { 'Xã Vĩnh Quỳnh': { lat: 20.95, lng: 105.81 } }); // ~2.5 km from Tuyến 1
+  const msg = server.boSungTuyen();
+  assert.match(msg, /Bổ sung 1 xã vào 1 tuyến/);
+  assert.match(msg, /Xã Xa Lạ/);
+  assert.deepEqual(tables.config_tuyen.slice(0, 3), ROUTES.slice(0, 3));
+  assert.deepEqual([...tables.config_tuyen[3].slice(0, 3)], ['Tuyến 1', 'Xã Vĩnh Quỳnh', 'Huyện Thanh Trì']);
+  assert.deepEqual([...tables.config_tuyen[4].slice(0, 3)], ['', 'Xã Xa Lạ', 'Huyện Sóc Sơn']);
+  assert.equal(server.boSungTuyen(), 'Bổ sung 0 xã vào 0 tuyến.'); // second run: nothing new
+});
+
+test('boSungTuyen opens a new route numbered after the highest one when nothing is near', () => {
+  const data = DATA.concat([['2026-11-11', 'NEW00003', 'ghn', 'ASSIGNING', 'Huyện Ba Vì', 'Xã Ba Trại, Huyện Ba Vì, Hà Nội']]);
+  const tables = { raw_data: data, config: CONFIG, config_tuyen: ROUTES.slice(0, 3).map((r) => r.slice()) };
+  const server = loadServer(tables, { 'Xã Ba Trại': { lat: 21.1, lng: 105.35 } });
+  server.boSungTuyen();
+  assert.deepEqual([...tables.config_tuyen[3].slice(0, 2)], ['Tuyến 3', 'Xã Ba Trại']);
+});
+
+test('invalid route settings are rejected', () => {
+  const tables = { raw_data: DATA, config: CONFIG, cai_dat_tuyen: [['ten', 'gia_tri'], ['khoang_cach_toi_da_km', 'abc']] };
+  assert.throws(() => loadServer(tables).taoCauHinhTuyen(), /khoang_cach_toi_da_km phải là số > 0/);
 });
