@@ -64,15 +64,17 @@ Bấm **Tuyến** rồi quét: lấy phường/xã trong địa chỉ (cột `dr
 
 | Hàm | Khi nào | Làm gì |
 |---|---|---|
-| `taoCauHinhTuyen` | Lần đầu | Lấy toạ độ từng phường/xã (Google Maps, chỉ gửi tên xã/huyện), gom các xã gần nhau thành Tuyến 1, 2, … ghi vào `config_tuyen`. Không chạy nếu sheet đã có dữ liệu. |
+| `taoCauHinhTuyen` | Lần đầu | Lấy toạ độ từng phường/xã (Google Maps, chỉ gửi tên xã/huyện), gom các xã gần nhau thành Tuyến 1, 2, … (mỗi tuyến = một chuyến xe) ghi vào `config_tuyen`. Không chạy nếu sheet đã có dữ liệu. |
 | `boSungTuyen` | Khi có xã mới | Chỉ thêm xã chưa có: vào tuyến gần nhất còn chỗ, nếu không thì mở tuyến mới. Không sửa dòng cũ. |
 
 Giới hạn chỉnh trong sheet `cai_dat_tuyen` (tự tạo lần chạy đầu):
 
 | ten | Mặc định | Ý nghĩa |
 |---|---|---|
-| `so_don_toi_da_moi_tuyen` | 30 | Tổng đơn tối đa một tuyến (đếm theo `raw_data` lúc chạy) |
-| `khoang_cach_toi_da_km` | 5 | Hai phường/xã bất kỳ trong cùng tuyến cách nhau không quá số km này |
+| `so_don_toi_thieu_moi_tuyen` | 30 | Một chuyến xe có ít nhất số đơn này (đếm theo `raw_data` lúc chạy) |
+| `so_don_toi_da_moi_tuyen` | 45 | Một chuyến xe có nhiều nhất số đơn này (sức chở) |
+
+Cách gom: mỗi tuyến bắt đầu từ xã ngoài cùng, lần lượt lấy xã gần nhất cho tới khi đủ số đơn tối thiểu (không vượt tối đa). Tuyến còn thiếu đơn ở cuối được tách ra, từng xã nhập vào tuyến gần nhất còn chỗ. Không giới hạn khoảng cách — vùng ngoại thành thưa đơn sẽ có tuyến dài hơn. Tuyến nào vẫn dưới tối thiểu (không còn tuyến gần còn chỗ) được liệt kê trong Execution log. Xã bị Google Maps trả toạ độ cách trung tâm huyện của nó > 15 km (trùng tên xã ở huyện khác) dùng toạ độ trung tâm huyện.
 
 `config_tuyen` (`ten_tuyen, phuong_xa, quan_huyen, lat, lng, so_don`) sửa tay được — đổi `ten_tuyen` để chuyển xã sang tuyến khác. Xã không tìm được toạ độ được ghi với `ten_tuyen` trống để điền tay. Muốn tạo lại từ đầu: xoá sheet `config_tuyen` rồi chạy `taoCauHinhTuyen`.
 

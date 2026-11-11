@@ -426,35 +426,39 @@ test('route scan: not found, cancelled, no ward, ward without route', () => {
   assert.equal(Lookup.resolveRoute(' ', index).status, 'empty');
 });
 
-// Points ~1 km apart along a line of latitude (0.009 deg lat ~ 1 km).
+// Points along a line of latitude (0.009 deg lat ~ 1 km).
 const ward = (name, km, orders) => ({ key: name, phuong_xa: name, quan_huyen: 'H', lat: 21 + km * 0.009, lng: 105.8, so_don: orders });
 const routesOf = (rows) => rows.reduce((m, r) => ({ ...m, [r.ten_tuyen]: [...(m[r.ten_tuyen] || []), r.phuong_xa] }), {});
+const loadsOf = (rows) => rows.reduce((m, r) => ({ ...m, [r.ten_tuyen]: (m[r.ten_tuyen] || 0) + r.so_don }), {});
+const TRUCK = { so_don_toi_thieu_moi_tuyen: 30, so_don_toi_da_moi_tuyen: 45 };
 
-test('clusterWards_: any two wards of a route are within khoang_cach_toi_da_km', () => {
+test('clusterWards_: every route has between min and max orders, wards stay contiguous', () => {
   const server = loadServer({});
-  const wards = [ward('A', 0, 2), ward('B', 2, 2), ward('C', 4, 2), ward('D', 6, 2), ward('E', 8, 2), ward('F', 30, 2)];
-  const settings = { so_don_toi_da_moi_tuyen: 100, khoang_cach_toi_da_km: 5 };
-  const rows = server.clusterWards_(wards, settings, 1);
-  assert.equal(rows.length, 6);
-  const byRoute = {};
-  rows.forEach((r) => (byRoute[r.ten_tuyen] ||= []).push(r));
-  Object.values(byRoute).forEach((members) => {
-    members.forEach((a) => members.forEach((b) => assert.ok(server.distanceKm_(a, b) <= 5.0001, `${a.phuong_xa}-${b.phuong_xa}`)));
+  const wards = Array.from({ length: 10 }, (_, i) => ward('W' + i, i, 8)); // 80 orders on a line
+  const rows = server.clusterWards_(wards, TRUCK, 1);
+  assert.equal(rows.length, 10);
+  Object.values(loadsOf(rows)).forEach((load) => assert.ok(load >= 30 && load <= 45, String(load)));
+  Object.values(routesOf(rows)).forEach((names) => {
+    const pos = names.map((n) => Number(n.slice(1))).sort((a, b) => a - b);
+    assert.equal(pos[pos.length - 1] - pos[0], pos.length - 1, pos.join()); // no gaps: nearby wards together
   });
-  assert.deepEqual(routesOf(rows)['Tuyến 1'], ['F']); // the far outlier is not merged into a nearby route
 });
 
-test('clusterWards_: order limit per route; an oversized ward stands alone', () => {
+test('clusterWards_: no distance cap, a far small ward joins a route instead of staying tiny', () => {
   const server = loadServer({});
-  const wards = [ward('A', 0, 10), ward('B', 0.5, 10), ward('C', 1, 10), ward('D', 1.5, 40)];
-  const rows = server.clusterWards_(wards, { so_don_toi_da_moi_tuyen: 20, khoang_cach_toi_da_km: 5 }, 1);
-  const routes = Object.values(routesOf(rows));
-  assert.equal(rows.length, 4);
-  routes.forEach((names) => {
-    const load = names.reduce((s, n) => s + wards.find((w) => w.phuong_xa === n).so_don, 0);
-    assert.ok(load <= 20 || names.length === 1);
-  });
-  assert.ok(routes.some((names) => names.length === 1 && names[0] === 'D'));
+  const wards = [ward('A', 0, 10), ward('B', 1, 10), ward('C', 2, 10), ward('FAR', 40, 3)];
+  const rows = server.clusterWards_(wards, TRUCK, 1);
+  assert.deepEqual(Object.keys(routesOf(rows)), ['Tuyến 1']);
+  assert.equal(loadsOf(rows)['Tuyến 1'], 33);
+});
+
+test('clusterWards_: an oversized ward stands alone; small routes stay when nothing has room', () => {
+  const server = loadServer({});
+  const big = server.clusterWards_([ward('A', 0, 10), ward('B', 1, 25), ward('D', 2, 60)], TRUCK, 1);
+  assert.ok(Object.values(routesOf(big)).some((names) => names.length === 1 && names[0] === 'D'));
+  Object.entries(loadsOf(big)).forEach(([name, load]) => assert.ok(load <= 45 || routesOf(big)[name].length === 1));
+  const tight = server.clusterWards_([ward('A', 0, 20), ward('B', 1, 20)], { so_don_toi_thieu_moi_tuyen: 30, so_don_toi_da_moi_tuyen: 30 }, 1);
+  assert.equal(Object.keys(routesOf(tight)).length, 2); // 20 + 20 > max 30: kept apart, reported as small
 });
 
 test('taoCauHinhTuyen builds config_tuyen and default settings from raw_data', () => {
@@ -464,14 +468,13 @@ test('taoCauHinhTuyen builds config_tuyen and default settings from raw_data', (
     'Huyện Quốc Oai': { lat: 20.99, lng: 105.64 }, // ward not found -> district centre fallback
   });
   const msg = server.taoCauHinhTuyen();
-  assert.match(msg, /Tạo 2 xã vào 2 tuyến/);
+  assert.match(msg, /Tạo 2 xã vào 1 tuyến/); // 2 orders in total: one route, flagged as under the minimum
+  assert.match(msg, /1 tuyến dưới 30 đơn.*Tuyến 1 \(2 đơn\)/);
   assert.deepEqual([...tables.config_tuyen[0]], ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_don']);
   const body = tables.config_tuyen.slice(1);
   assert.deepEqual(body.map((r) => r[1]).sort(), ['Xã Liệp Nghĩa', 'Xã Tả Thanh Oai']);
-  assert.ok(body.every((r) => /^Tuyến \d+$/.test(r[0])));
-  assert.equal(tables.cai_dat_tuyen[1][0], 'so_don_toi_da_moi_tuyen');
-  assert.equal(tables.cai_dat_tuyen[2][0], 'khoang_cach_toi_da_km');
-  assert.equal(tables.cai_dat_tuyen[2][1], 5);
+  assert.ok(body.every((r) => r[0] === 'Tuyến 1'));
+  assert.deepEqual(tables.cai_dat_tuyen.slice(1).map((r) => [r[0], r[1]]), [['so_don_toi_thieu_moi_tuyen', 30], ['so_don_toi_da_moi_tuyen', 45]]);
   assert.throws(() => server.taoCauHinhTuyen(), /đã có 2 dòng/); // never overwrites
 });
 
@@ -481,27 +484,48 @@ test('boSungTuyen adds only new wards, keeps existing rows, lists ungeocoded one
     ['2026-11-11', 'NEW00002', 'ghn', 'ASSIGNING', 'Huyện Sóc Sơn', 'Thôn 1, Xã Xa Lạ, Huyện Sóc Sơn, Hà Nội'],
   ]);
   const routes = ROUTES.slice(0, 3).map((r) => r.slice());
-  const settings = [['ten', 'gia_tri'], ['so_don_toi_da_moi_tuyen', '30'], ['khoang_cach_toi_da_km', '5']];
+  const settings = [['ten', 'gia_tri'], ['so_don_toi_thieu_moi_tuyen', '1'], ['so_don_toi_da_moi_tuyen', '45']];
   const tables = { raw_data: data, config: CONFIG, config_tuyen: routes, cai_dat_tuyen: settings };
-  const server = loadServer(tables, { 'Xã Vĩnh Quỳnh': { lat: 20.95, lng: 105.81 } }); // ~2.5 km from Tuyến 1
+  const server = loadServer(tables, { 'Xã Vĩnh Quỳnh': { lat: 20.95, lng: 105.81 } }); // closest to Tuyến 1
   const msg = server.boSungTuyen();
-  assert.match(msg, /Bổ sung 1 xã vào 1 tuyến/);
-  assert.match(msg, /Xã Xa Lạ/);
+  assert.match(msg, /^Bổ sung 1 xã vào 1 tuyến\. 1 xã không tìm được toạ độ.*Xã Xa Lạ/);
   assert.deepEqual(tables.config_tuyen.slice(0, 3), ROUTES.slice(0, 3));
   assert.deepEqual([...tables.config_tuyen[3].slice(0, 3)], ['Tuyến 1', 'Xã Vĩnh Quỳnh', 'Huyện Thanh Trì']);
   assert.deepEqual([...tables.config_tuyen[4].slice(0, 3)], ['', 'Xã Xa Lạ', 'Huyện Sóc Sơn']);
   assert.equal(server.boSungTuyen(), 'Bổ sung 0 xã vào 0 tuyến.'); // second run: nothing new
 });
 
-test('boSungTuyen opens a new route numbered after the highest one when nothing is near', () => {
+test('boSungTuyen opens a new route numbered after the highest one when every route is full', () => {
   const data = DATA.concat([['2026-11-11', 'NEW00003', 'ghn', 'ASSIGNING', 'Huyện Ba Vì', 'Xã Ba Trại, Huyện Ba Vì, Hà Nội']]);
-  const tables = { raw_data: data, config: CONFIG, config_tuyen: ROUTES.slice(0, 3).map((r) => r.slice()) };
+  const full = ROUTES.slice(0, 3).map((r, i) => (i ? [...r.slice(0, 5), '45'] : r.slice()));
+  const tables = { raw_data: data, config: CONFIG, config_tuyen: full };
   const server = loadServer(tables, { 'Xã Ba Trại': { lat: 21.1, lng: 105.35 } });
   server.boSungTuyen();
   assert.deepEqual([...tables.config_tuyen[3].slice(0, 2)], ['Tuyến 3', 'Xã Ba Trại']);
 });
 
-test('invalid route settings are rejected', () => {
-  const tables = { raw_data: DATA, config: CONFIG, cai_dat_tuyen: [['ten', 'gia_tri'], ['khoang_cach_toi_da_km', 'abc']] };
-  assert.throws(() => loadServer(tables).taoCauHinhTuyen(), /khoang_cach_toi_da_km phải là số > 0/);
+test('route settings: missing keys are added with defaults; invalid values are rejected', () => {
+  const old = [['ten', 'gia_tri', 'ghi_chu'], ['so_don_toi_da_moi_tuyen', '50', ''], ['khoang_cach_toi_da_km', '5', '']];
+  const server = loadServer({ cai_dat_tuyen: old });
+  const settings = server.readRouteSettings_(server.SpreadsheetApp.openById());
+  assert.deepEqual({ ...settings }, { so_don_toi_thieu_moi_tuyen: 30, so_don_toi_da_moi_tuyen: 50 });
+  assert.equal(old[3][0], 'so_don_toi_thieu_moi_tuyen'); // appended so the user sees and can edit it
+  const bad = (rows) => () => loadServer({ raw_data: DATA, config: CONFIG, cai_dat_tuyen: [['ten', 'gia_tri'], ...rows] }).taoCauHinhTuyen();
+  assert.throws(bad([['so_don_toi_thieu_moi_tuyen', 'abc']]), /so_don_toi_thieu_moi_tuyen phải là số > 0/);
+  assert.throws(bad([['so_don_toi_thieu_moi_tuyen', '50'], ['so_don_toi_da_moi_tuyen', '40']]), /phải ≥ so_don_toi_thieu_moi_tuyen/);
+});
+
+test('a ward geocoded far from its own district falls back to the district centre', () => {
+  const wards = [
+    { key: 'a', phuong_xa: 'Xã Tam Hiệp', quan_huyen: 'Huyện Thanh Trì', city: 'Hà Nội', so_don: 1 },
+    { key: 'b', phuong_xa: 'Xã Vĩnh Quỳnh', quan_huyen: 'Huyện Thanh Trì', city: 'Hà Nội', so_don: 1 },
+  ];
+  const geo = {
+    'Huyện Thanh Trì': { lat: 20.94, lng: 105.84 },
+    'Xã Tam Hiệp': { lat: 21.085, lng: 105.626 }, // the Tam Hiệp in Phúc Thọ, ~27 km away
+    'Xã Vĩnh Quỳnh': { lat: 20.95, lng: 105.81 },
+  };
+  const located = loadServer({}, geo).locateWards_(wards).located;
+  assert.deepEqual([located[0].lat, located[0].lng], [20.94, 105.84]);
+  assert.deepEqual([located[1].lat, located[1].lng], [20.95, 105.81]);
 });

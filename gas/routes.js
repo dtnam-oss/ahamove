@@ -1,7 +1,8 @@
 // Delivery routes by ward (phường/xã), stored in sheet `config_tuyen` and reused day after day.
 //
 // Run from the Apps Script editor (select the function, press Run):
-//   taoCauHinhTuyen() - first build: groups every ward found in raw_data into routes of nearby wards.
+//   taoCauHinhTuyen() - first build: groups every ward found in raw_data into truck routes of nearby
+//                        wards, each with between so_don_toi_thieu and so_don_toi_da orders.
 //                        Refuses to run when config_tuyen already has rows (never overwrites edits).
 //   boSungTuyen()     - later runs: adds only wards missing from config_tuyen, to the nearest route
 //                        with room, or to new routes. Existing rows are never changed.
@@ -15,8 +16,8 @@ const ROUTE_HEADER = ['ten_tuyen', 'phuong_xa', 'quan_huyen', 'lat', 'lng', 'so_
 const ROUTE_SETTINGS_SHEET = 'cai_dat_tuyen';
 const ROUTE_SETTINGS = [
   // [key, default, note]
-  ['so_don_toi_da_moi_tuyen', 30, 'Tổng số đơn tối đa của một tuyến (tính theo raw_data lúc chạy script)'],
-  ['khoang_cach_toi_da_km', 5, 'Hai phường/xã bất kỳ trong cùng một tuyến cách nhau không quá số km này'],
+  ['so_don_toi_thieu_moi_tuyen', 30, 'Một tuyến (một chuyến xe) có ít nhất số đơn này (tính theo raw_data lúc chạy script)'],
+  ['so_don_toi_da_moi_tuyen', 45, 'Một tuyến có nhiều nhất số đơn này (sức chở của xe)'],
 ];
 const ROUTE_PREFIX = 'Tuyến ';
 
@@ -32,7 +33,7 @@ function taoCauHinhTuyen() {
   const wards = locateWards_(collectWards_(ss));
   const rows = clusterWards_(wards.located, settings, 1);
   writeRouteRows_(ss, rows.concat(wards.unlocated.map(unroutedRow_)));
-  return logRouteSummary_('Tạo', rows, wards.unlocated);
+  return logRouteSummary_('Tạo', rows, rows, wards.unlocated, settings);
 }
 
 /** Add wards that appeared in raw_data since the last run; existing assignments stay as they are. */
@@ -46,13 +47,28 @@ function boSungTuyen() {
   const wards = locateWards_(fresh);
   const rows = assignNewWards_(existing.rows, wards.located, settings);
   writeRouteRows_(ss, rows.concat(wards.unlocated.map(unroutedRow_)));
-  return logRouteSummary_('Bổ sung', rows, wards.unlocated);
+  return logRouteSummary_('Bổ sung', rows, existing.rows.concat(rows), wards.unlocated, settings);
 }
 
-function logRouteSummary_(verb, rows, unlocated) {
+/** `rows` = rows written now; `allRows` = whole config afterwards (to flag routes under the minimum). */
+function routeLoads_(rows) {
+  const loads = {};
+  rows.forEach(function (r) {
+    const name = String(r.ten_tuyen).trim();
+    if (name) loads[name] = (loads[name] || 0) + (Number(r.so_don) || 0);
+  });
+  return Object.keys(loads).map(function (name) { return { name: name, load: loads[name] }; });
+}
+
+function logRouteSummary_(verb, rows, allRows, unlocated, settings) {
   const routes = {};
   rows.forEach(function (r) { routes[r.ten_tuyen] = true; });
+  const small = routeLoads_(allRows).filter(function (r) { return r.load < settings.so_don_toi_thieu_moi_tuyen; });
   const msg = verb + ' ' + rows.length + ' xã vào ' + Object.keys(routes).length + ' tuyến.' +
+    (small.length
+      ? ' ' + small.length + ' tuyến dưới ' + settings.so_don_toi_thieu_moi_tuyen + ' đơn (không còn tuyến gần còn chỗ để nhập): ' +
+        small.map(function (r) { return r.name + ' (' + r.load + ' đơn)'; }).join('; ') + '.'
+      : '') +
     (unlocated.length
       ? ' ' + unlocated.length + ' xã không tìm được toạ độ, cần điền ten_tuyen bằng tay: ' +
         unlocated.map(function (w) { return w.phuong_xa + ' (' + w.quan_huyen + ')'; }).join('; ')
@@ -117,19 +133,31 @@ function collectWards_(ss) {
 
 // ---------- Geocoding ----------
 
-/** Adds lat/lng to each ward (falls back to the district centre); splits off the ones not found. */
+// A ward point farther than this from its district centre is a geocoding mismatch: ward names repeat
+// across districts (e.g. "Xã Tam Hiệp" exists in Thanh Trì and Phúc Thọ) and the geocoder sometimes
+// returns the other one. Hanoi's largest districts are well under this radius.
+const MAX_WARD_TO_DISTRICT_KM = 15;
+
+/**
+ * Adds lat/lng to each ward. Uses the district centre when the ward is not found or lands too far
+ * from its own district; splits off the wards with no usable point at all.
+ */
 function locateWards_(wards) {
   const geocoder = Maps.newGeocoder().setRegion('vn').setLanguage('vi');
   const districtCache = {};
   const located = [];
   const unlocated = [];
   wards.forEach(function (w) {
+    const dk = foldText_(w.quan_huyen + ',' + w.city);
+    if (!(dk in districtCache)) districtCache[dk] = geocode_(geocoder, [w.quan_huyen, w.city]);
+    const centre = districtCache[dk];
     let point = geocode_(geocoder, [w.phuong_xa, w.quan_huyen, w.city]);
-    if (!point) {
-      const dk = foldText_(w.quan_huyen + ',' + w.city);
-      if (!(dk in districtCache)) districtCache[dk] = geocode_(geocoder, [w.quan_huyen, w.city]);
-      point = districtCache[dk];
+    if (point && centre && distanceKm_(point, centre) > MAX_WARD_TO_DISTRICT_KM) {
+      console.warn(w.phuong_xa + ' (' + w.quan_huyen + '): toạ độ cách trung tâm huyện ' +
+        Math.round(distanceKm_(point, centre)) + ' km, dùng toạ độ trung tâm huyện');
+      point = null;
     }
+    if (!point) point = centre;
     if (point) located.push(Object.assign({}, w, point));
     else unlocated.push(w);
   });
@@ -161,11 +189,6 @@ function distanceKm_(a, b) {
   return 12742 * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-/** True when `w` is within khoang_cach_toi_da_km of every point (pairwise limit inside a route). */
-function withinReach_(w, points, settings) {
-  return points.every(function (p) { return distanceKm_(w, p) <= settings.khoang_cach_toi_da_km; });
-}
-
 function centroid_(points) {
   const n = points.length;
   return {
@@ -174,51 +197,85 @@ function centroid_(points) {
   };
 }
 
+/** Index of the item in `list` closest to `point`, among those accepted by `ok` (or -1). */
+function nearestIndex_(list, point, ok) {
+  let best = -1;
+  let bestD = Infinity;
+  list.forEach(function (item, i) {
+    if (!ok(item)) return;
+    const d = distanceKm_(item, point);
+    if (d < bestD) { best = i; bestD = d; }
+  });
+  return best;
+}
+
+function groupLoad_(members) {
+  return members.reduce(function (s, w) { return s + w.so_don; }, 0);
+}
+
 /**
- * Group wards into routes of nearby wards. Greedy and deterministic:
- * each route starts at the outermost remaining ward (so outlying wards are not left over as
- * scattered leftovers), then repeatedly takes the remaining ward closest to the route's centre
- * that keeps the route within `so_don_toi_da_moi_tuyen` orders and within `khoang_cach_toi_da_km`
- * of every ward already in the route (so any two wards of a route are at most that far apart). A single ward with more orders than the limit becomes a route on its own.
+ * Group wards into truck routes. Greedy and deterministic, by orders only (no distance cap):
+ * 1. Each route starts at the outermost remaining ward (so outlying wards are not left over as
+ *    scattered leftovers) and keeps taking the remaining ward closest to the route's centre until
+ *    it has at least `so_don_toi_thieu_moi_tuyen` orders, never going over `so_don_toi_da_moi_tuyen`.
+ * 2. Routes still under the minimum (usually the last leftovers) are dissolved: each of their wards
+ *    moves to the closest other route that stays within the maximum. Wards that fit nowhere keep
+ *    their small route (reported by the run summary).
+ * A single ward with more orders than the maximum becomes a route on its own.
  * Returns config rows numbered from `startNo`.
  */
 function clusterWards_(wards, settings, startNo) {
+  const min = settings.so_don_toi_thieu_moi_tuyen;
+  const max = settings.so_don_toi_da_moi_tuyen;
   const remaining = wards.slice();
-  const rows = [];
-  if (!remaining.length) return rows;
+  if (!remaining.length) return [];
   const middle = centroid_(remaining);
-  let no = startNo;
+  const groups = [];
   while (remaining.length) {
     let seedIdx = 0;
     remaining.forEach(function (w, i) {
       if (distanceKm_(w, middle) > distanceKm_(remaining[seedIdx], middle)) seedIdx = i;
     });
-    const seed = remaining.splice(seedIdx, 1)[0];
-    const members = [seed];
-    let load = seed.so_don;
-    for (;;) {
-      const centre = centroid_(members);
-      let best = -1;
-      remaining.forEach(function (w, i) {
-        if (load + w.so_don > settings.so_don_toi_da_moi_tuyen) return;
-        if (!withinReach_(w, members, settings)) return;
-        if (best < 0 || distanceKm_(w, centre) < distanceKm_(remaining[best], centre)) best = i;
-      });
-      if (best < 0) break;
-      const next = remaining.splice(best, 1)[0];
-      members.push(next);
-      load += next.so_don;
+    const members = remaining.splice(seedIdx, 1);
+    let load = members[0].so_don;
+    while (load < min) {
+      const i = nearestIndex_(remaining, centroid_(members), function (w) { return load + w.so_don <= max; });
+      if (i < 0) break;
+      load += remaining[i].so_don;
+      members.push(remaining.splice(i, 1)[0]);
     }
-    const name = ROUTE_PREFIX + no++;
-    members.forEach(function (w) { rows.push(routeRow_(name, w)); });
+    groups.push(members);
   }
+
+  groups
+    .filter(function (g) { return groupLoad_(g) < min; })
+    .sort(function (a, b) { return groupLoad_(a) - groupLoad_(b); })
+    .forEach(function (small) {
+      small.slice().forEach(function (w) {
+        const others = groups.filter(function (g) { return g !== small && g.length; });
+        const centres = others.map(function (g) { return centroid_(g); });
+        const i = nearestIndex_(centres, w, function (c) {
+          return groupLoad_(others[centres.indexOf(c)]) + w.so_don <= max;
+        });
+        if (i < 0) return;
+        others[i].push(w);
+        small.splice(small.indexOf(w), 1);
+      });
+    });
+
+  const rows = [];
+  let no = startNo;
+  groups.filter(function (g) { return g.length; }).forEach(function (g) {
+    const name = ROUTE_PREFIX + no++;
+    g.forEach(function (w) { rows.push(routeRow_(name, w)); });
+  });
   return rows;
 }
 
 /**
- * Incremental run: each new ward joins the closest existing route (by route centre) that still has
- * room and whose every ward is within khoang_cach_toi_da_km of it; the rest are grouped into new routes numbered after
- * the highest existing one. Route load = sum of so_don recorded in config_tuyen.
+ * Incremental run: each new ward joins the closest existing route (by route centre) that stays
+ * within so_don_toi_da_moi_tuyen; the rest are grouped into new routes numbered after the highest
+ * existing one. Route load = sum of so_don recorded in config_tuyen.
  */
 function assignNewWards_(existingRows, newWards, settings) {
   const routes = {};
@@ -236,22 +293,18 @@ function assignNewWards_(existingRows, newWards, settings) {
   });
   const list = Object.keys(routes).map(function (k) { return routes[k]; })
     .filter(function (r) { return r.points.length; });
-  list.forEach(function (r) { r.centre = centroid_(r.points); });
 
   const rows = [];
   const leftover = [];
   newWards.forEach(function (w) {
-    let best = null;
-    list.forEach(function (r) {
-      if (r.load + w.so_don > settings.so_don_toi_da_moi_tuyen) return;
-      if (!withinReach_(w, r.points, settings)) return;
-      const d = distanceKm_(w, r.centre);
-      if (!best || d < best.d) best = { route: r, d: d };
+    const centres = list.map(function (r) { return centroid_(r.points); });
+    const i = nearestIndex_(centres, w, function (c) {
+      return list[centres.indexOf(c)].load + w.so_don <= settings.so_don_toi_da_moi_tuyen;
     });
-    if (!best) { leftover.push(w); return; }
-    best.route.load += w.so_don;
-    best.route.points.push({ lat: w.lat, lng: w.lng });
-    rows.push(routeRow_(best.route.name, w));
+    if (i < 0) { leftover.push(w); return; }
+    list[i].load += w.so_don;
+    list[i].points.push({ lat: w.lat, lng: w.lng });
+    rows.push(routeRow_(list[i].name, w));
   });
   return rows.concat(clusterWards_(leftover, settings, maxNo + 1));
 }
@@ -278,10 +331,14 @@ function readRouteSettings_(ss) {
   const settings = {};
   ROUTE_SETTINGS.forEach(function (s) {
     const row = values.find(function (r) { return String(r[0]).trim() === s[0]; });
+    if (!row) sheet.getRange(sheet.getLastRow() + 1, 1, 1, 3).setValues([s]); // new setting: show its default
     const value = row ? Number(String(row[1]).trim().replace(',', '.')) : s[1];
     if (!(value > 0)) throw new Error('Sheet "' + ROUTE_SETTINGS_SHEET + '": ' + s[0] + ' phải là số > 0');
     settings[s[0]] = value;
   });
+  if (settings.so_don_toi_da_moi_tuyen < settings.so_don_toi_thieu_moi_tuyen) {
+    throw new Error('Sheet "' + ROUTE_SETTINGS_SHEET + '": so_don_toi_da_moi_tuyen phải ≥ so_don_toi_thieu_moi_tuyen');
+  }
   return settings;
 }
 
