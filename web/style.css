@@ -59,7 +59,7 @@ html, body {
   font-size: 0.9rem;
 }
 
-.mode-bar { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mode-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .mode-btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
 
 .write-panel {
@@ -122,9 +122,9 @@ html, body {
 .result-code { color: var(--muted); margin-top: 10px; font-family: ui-monospace, monospace; word-break: break-all; }
 
 .result-ok { background: #052e16; border-color: var(--ok); }
-.result-unmapped, .result-no_district { background: #431407; border-color: var(--warn); }
+.result-unmapped, .result-no_district, .result-no_days, .result-unavailable { background: #431407; border-color: var(--warn); }
 .result-pending { border-color: var(--primary); }
-.result-not_found, .result-error, .result-cancelled { background: #450a0a; border-color: var(--error); }
+.result-not_found, .result-error, .result-cancelled, .result-overdue { background: #450a0a; border-color: var(--error); }
 
 .gate {
   position: fixed;

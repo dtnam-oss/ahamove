@@ -1,5 +1,6 @@
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
-// and "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan).
+// "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan)
+// and "Backlog" mode (speak the days left to the deadline from sheet back_log).
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var els = {
@@ -31,7 +32,7 @@
   var lastCamera = { text: '', at: 0 };
   var CAMERA_REPEAT_MS = 2500; // ignore the same code re-read by the live camera within this window
 
-  var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don
+  var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don | 'backlog' = days left
   var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
   var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
 
@@ -80,7 +81,8 @@
         if (body.error) throw new Error(body.error);
         index = Lookup.buildIndex(body);
         var time = new Date(body.updatedAt).toLocaleTimeString('vi-VN');
-        els.status.textContent = body.orderCount + ' đơn · cập nhật ' + time;
+        var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
+        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · cập nhật ' + time;
       })
       .catch(function (err) {
         var msg = (err && err.message) || String(err);
@@ -105,6 +107,7 @@
   function handleScan(raw) {
     if (mode === 'write') { queueWrite(raw); return; }
     if (!index) { speak('Chưa tải dữ liệu'); return; }
+    if (mode === 'backlog') { handleBacklog(raw); return; }
     var r = Lookup.resolveScan(raw, index);
     if (r.status === 'empty') return;
     if (r.status === 'ok') showResult(r.status, r.location, r.district, r.code);
@@ -182,7 +185,8 @@
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
     });
     els.writePanel.hidden = mode !== 'write';
-    showResult('idle', 'Sẵn sàng quét', mode === 'write' ? 'Chế độ ghi sheet data_don' : '');
+    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog' };
+    showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
   }
 
@@ -197,6 +201,17 @@
     });
   });
   updateWriteCell();
+
+  function handleBacklog(raw) {
+    var r = Lookup.resolveBacklog(raw, index);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') showResult(r.status, r.days + ' ngày', 'Còn hạn', r.code);
+    else if (r.status === 'overdue') showResult(r.status, r.days + ' ngày', 'Quá hạn', r.code);
+    else if (r.status === 'no_days') showResult(r.status, 'Chưa có số ngày', 'Cột "Còn lại (ngày)" đang trống', r.code);
+    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu backlog', els.status.textContent);
+    else showResult(r.status, 'Không có trong backlog', '', r.input);
+    speak(r.speech);
+  }
 
   function focusInput() {
     // Keep focus for the barcode gun, but not while the camera is open (avoids popping the mobile keyboard).

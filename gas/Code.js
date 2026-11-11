@@ -10,6 +10,8 @@
 const DATA_SHEET = 'raw_data'; // order source (columns found by header name)
 const CONFIG_SHEET = 'config';
 const SCAN_SHEET = 'data_don';
+const BACKLOG_SHEET = 'back_log';
+const BACKLOG_DAYS_COLUMN = 'Còn lại (ngày), âm là quá hạn'; // days left to the deadline, negative = overdue
 const APP_URL = 'https://dtnam-oss.github.io/ahamove/';
 
 function doGet(e) {
@@ -85,12 +87,31 @@ function getLookupData() {
     config.push({ ten_vi_tri: name, khu_vuc: areas });
   });
 
+  const backlog = readBacklog_(ss);
+
   return {
     updatedAt: new Date().toISOString(),
     orderCount: Object.keys(orders).length,
     orders: orders,
     config: config,
+    backlog: backlog.days, // code -> days left (display string), or null when back_log is unreadable
+    backlogError: backlog.error,
   };
+}
+
+/** back_log is optional for sorting: a problem there is reported, never breaks the main payload. */
+function readBacklog_(ss) {
+  try {
+    const table = readTable_(ss, BACKLOG_SHEET, ['tracking_number', BACKLOG_DAYS_COLUMN]);
+    const days = {};
+    table.rows.forEach(function (r) {
+      const code = String(r[table.col.tracking_number]).trim().toUpperCase();
+      if (code && !(code in days)) days[code] = String(r[table.col[BACKLOG_DAYS_COLUMN]]).trim(); // first row wins
+    });
+    return { days: days, error: '' };
+  } catch (err) {
+    return { days: null, error: String((err && err.message) || err) };
+  }
 }
 
 /**

@@ -54,8 +54,18 @@ const CONFIG = [
   ['Nthanh2', 'Khu vực 3', 'Huyện Ứng Hòa , Huyện Thường Tín'],
 ];
 
+// Mirrors sheet back_log: the days-left column is located by its full header name.
+const DAYS = 'Còn lại (ngày), âm là quá hạn';
+const BACKLOG = [
+  ['tracking_number', 'Ngày N (cột date)', 'Hạn final', DAYS, 'Nhóm hạn'],
+  ['GYEGFF9C', '07/11/2026', '12/11/2026', '1', 'Còn hạn'],
+  ['eeee5555', '01/11/2026', '09/11/2026', '-2', 'Quá hạn'],
+  ['FFFF6666', '07/11/2026', '12/11/2026', '', ''],
+  ['GYEGFF9C', '07/11/2026', '20/11/2026', '9', 'Còn hạn'], // duplicate: first row wins
+];
+
 function setup() {
-  const server = loadServer({ raw_data: DATA, config: CONFIG });
+  const server = loadServer({ raw_data: DATA, config: CONFIG, back_log: BACKLOG });
   const payload = server.getLookupData();
   const Lookup = loadLookup();
   return { payload, Lookup, index: Lookup.buildIndex(payload) };
@@ -263,4 +273,48 @@ test('client cell helpers: normalizeCell / nextCell', () => {
   assert.equal(Lookup.nextCell('C3'), 'C4');
   assert.equal(Lookup.nextCell('ab99'), 'AB100');
   assert.equal(Lookup.nextCell('bad'), '');
+});
+
+// ---------- Backlog mode: sheet back_log ----------
+
+test('server payload carries back_log days only (first row wins)', () => {
+  const { payload } = setup();
+  assert.deepEqual({ ...payload.backlog }, { GYEGFF9C: '1', EEEE5555: '-2', FFFF6666: '' });
+  assert.equal(payload.backlogError, '');
+  assert.ok(!JSON.stringify(payload.backlog).includes('12/11/2026'));
+});
+
+test('missing back_log sheet or column does not break the sorting payload', () => {
+  const noSheet = loadServer({ raw_data: DATA, config: CONFIG }).getLookupData();
+  assert.equal(noSheet.backlog, null);
+  assert.match(noSheet.backlogError, /Không tìm thấy sheet "back_log"/);
+  assert.equal(noSheet.orderCount, 6);
+  const noCol = loadServer({ raw_data: DATA, config: CONFIG, back_log: [['tracking_number', 'Còn lại']] }).getLookupData();
+  assert.match(noCol.backlogError, /thiếu cột Còn lại \(ngày\), âm là quá hạn/);
+});
+
+test('backlog scan speaks days left + " ngày"', () => {
+  const { Lookup, index } = setup();
+  const r = Lookup.resolveBacklog(' gyegff9c ', index);
+  assert.equal(r.status, 'ok');
+  assert.equal(r.speech, '1 ngày');
+});
+
+test('negative days left is overdue and still spoken as the value', () => {
+  const { Lookup, index } = setup();
+  const r = Lookup.resolveBacklog('EEEE5555', index);
+  assert.equal(r.status, 'overdue');
+  assert.equal(r.speech, '-2 ngày');
+});
+
+test('backlog: not listed, empty days, QR payload, no back_log data', () => {
+  const { Lookup, index } = setup();
+  const nf = Lookup.resolveBacklog('AAAA1111', index); // in raw_data, not in back_log
+  assert.equal(nf.status, 'not_found');
+  assert.equal(nf.speech, 'Không có trong backlog');
+  assert.equal(Lookup.resolveBacklog('FFFF6666', index).status, 'no_days');
+  assert.equal(Lookup.resolveBacklog('https://x.vn/t?code=GYEGFF9C', index).speech, '1 ngày');
+  assert.equal(Lookup.resolveBacklog('  ', index).status, 'empty');
+  const noBacklog = Lookup.buildIndex({ orders: {}, config: [], backlog: null });
+  assert.equal(Lookup.resolveBacklog('GYEGFF9C', noBacklog).status, 'unavailable');
 });

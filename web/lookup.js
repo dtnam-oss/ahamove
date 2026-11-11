@@ -37,7 +37,14 @@ var Lookup = (function () {
         if (key && !areas.has(key)) areas.set(key, row.ten_vi_tri); // first config row wins
       });
     });
-    return { orders: orders, areas: areas };
+    var backlog = null;
+    if (payload.backlog) {
+      backlog = new Map();
+      Object.keys(payload.backlog).forEach(function (code) {
+        backlog.set(normalizeCode(code), payload.backlog[code]);
+      });
+    }
+    return { orders: orders, areas: areas, backlog: backlog };
   }
 
   /** Exact match first; otherwise any alphanumeric token of the scan (QR may hold a URL/long string). */
@@ -74,6 +81,21 @@ var Lookup = (function () {
     return { status: 'ok', code: code, district: district, location: location, speech: location + ', ' + district };
   }
 
+  /**
+   * Backlog check (sheet back_log): speak the "days left" value + " ngày", e.g. "1 ngày", "-2 ngày".
+   * status: 'empty' | 'unavailable' | 'not_found' | 'no_days' | 'overdue' (negative) | 'ok'.
+   */
+  function resolveBacklog(raw, index) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    if (!index.backlog) return { status: 'unavailable', speech: 'Chưa có dữ liệu backlog' };
+    var code = findCode(raw, index.backlog);
+    if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không có trong backlog' };
+    var days = String(index.backlog.get(code) == null ? '' : index.backlog.get(code)).trim();
+    if (!days) return { status: 'no_days', code: code, speech: 'Chưa có số ngày còn lại' };
+    var overdue = Number(days.replace(',', '.')) < 0;
+    return { status: overdue ? 'overdue' : 'ok', code: code, days: days, speech: days + ' ngày' };
+  }
+
   /** " c3 " -> "C3"; anything that is not a single A1 cell -> "". */
   function normalizeCell(value) {
     var cell = String(value == null ? '' : value).replace(/\s+/g, '').toUpperCase();
@@ -93,6 +115,7 @@ var Lookup = (function () {
     buildIndex: buildIndex,
     findCode: findCode,
     resolveScan: resolveScan,
+    resolveBacklog: resolveBacklog,
     normalizeCell: normalizeCell,
     nextCell: nextCell,
   };

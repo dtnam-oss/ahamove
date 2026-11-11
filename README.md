@@ -43,6 +43,19 @@ Bấm **Ghi sheet**, nhập **Cột nhập** của bạn (bắt buộc, vd `C`) 
 - **Trùng mã:** nếu mã đã có ở bất kỳ ô nào trong cột đó → đọc "Trùng mã", không ghi, màn hình hiện ô đang chứa mã.
 - Chỉ nhận mã gồm chữ/số và `. _ -` (chặn chèn công thức). Ai có URL API đều ghi được vào `data_don`.
 
+## Chế độ Backlog
+
+Bấm **Backlog** rồi quét: tra mã trong sheet `back_log`, cột **"Còn lại (ngày), âm là quá hạn"**, và đọc to `<giá trị> ngày` (vd "1 ngày", "-2 ngày").
+
+| Trường hợp | Màn hình | Giọng đọc |
+|---|---|---|
+| Còn hạn (≥ 0) | xanh, "Còn hạn" | "1 ngày" |
+| Quá hạn (< 0) | đỏ, "Quá hạn" | "-2 ngày" |
+| Ô số ngày trống | cam | "Chưa có số ngày còn lại" |
+| Mã không có trong `back_log` | đỏ | "Không có trong backlog" |
+
+`back_log` được tải cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). Cột được tìm theo đúng tên tiêu đề — đổi tên cột thì thanh trạng thái báo "backlog lỗi", các chế độ khác vẫn chạy.
+
 ## Cấu trúc
 
 ```
