@@ -1,6 +1,7 @@
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
 // "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan)
 // "Backlog" mode (speak the days left to the deadline from sheet back_log)
+// "Chia tuyến" mode (speak the order's route from sheet config_tuyen, like "Chia chọn" does for areas)
 // and "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck).
 (function () {
   var $ = function (id) { return document.getElementById(id); };
@@ -124,6 +125,7 @@
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
     if (mode === 'route') { handleRouteScan(raw); return; }
+    if (mode === 'routesort') { handleRouteSort(raw); return; }
     var r = Lookup.resolveScan(raw, index);
     if (r.status === 'empty') return;
     if (r.status === 'ok') showResult(r.status, r.location, r.district, r.code);
@@ -203,7 +205,7 @@
     els.writePanel.hidden = mode !== 'write';
     leaveRouteScreens();
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
-    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog' };
+    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
   }
@@ -235,6 +237,18 @@
     var names = {};
     rows.forEach(function (r) { names[r.ten_tuyen] = true; });
     return Object.keys(names).length;
+  }
+
+  function handleRouteSort(raw) {
+    var r = Lookup.resolveRouteSort(raw, index);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') showResult(r.status, r.route, r.ward + ' · ' + r.district, r.code);
+    else if (r.status === 'unmapped') showResult(r.status, 'Chưa có tuyến', r.ward + ' · ' + r.district, r.code);
+    else if (r.status === 'no_ward') showResult(r.status, 'Chưa rõ phường/xã', r.district, r.code);
+    else if (r.status === 'cancelled') showResult(r.status, 'Đơn đã huỷ', 'Không chia tuyến — tách riêng', r.code);
+    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có cấu hình tuyến', els.status.textContent);
+    else showResult(r.status, 'Không tìm thấy đơn', '', r.input);
+    speak(r.speech);
   }
 
   // ---------- Tuyến mode: pick routes, then check each order loaded onto the truck ----------

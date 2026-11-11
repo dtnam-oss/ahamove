@@ -700,3 +700,18 @@ test('a long batch run stops itself before the 6-minute limit, keeping its progr
   assert.throws(() => server.goongGeocodeMany_(queries, (r) => { saved += r.length; }), /bấm Run lần nữa để chạy tiếp/);
   assert.equal(saved, 5); // the first batch finished and was handed over before stopping
 });
+
+test('Chia tuyến: speaks the order\'s route, like Chia chọn speaks the area', () => {
+  const { Lookup, index } = pickSetup();
+  const r = Lookup.resolveRouteSort(' t1c ', index);
+  assert.deepEqual([r.status, r.speech, r.ward, r.district], ['ok', 'Tuyến 1', 'Xã Vĩnh Quỳnh', 'Huyện Thanh Trì']);
+  assert.equal(Lookup.resolveRouteSort('https://x.vn/t?code=T2A', index).speech, 'Tuyến 2');
+  assert.equal(Lookup.resolveRouteSort('T1X', index).speech, 'Đơn đã huỷ');
+  assert.equal(Lookup.resolveRouteSort('NOR', index).speech, 'Chưa có tuyến'); // ward not in config_tuyen
+  assert.equal(Lookup.resolveRouteSort('ZZZZ', index).speech, 'Không tìm thấy đơn');
+  assert.equal(Lookup.resolveRouteSort('  ', index).status, 'empty');
+  const { Lookup: L2, index: noWard } = routeSetup();
+  assert.equal(L2.resolveRouteSort('AAAA1111', noWard).speech, 'Chưa rõ phường xã'); // address without a ward
+  const none = L2.buildIndex(loadServer({ raw_data: DATA, config: CONFIG }).getLookupData());
+  assert.equal(L2.resolveRouteSort('GYEGFF9C', none).status, 'unavailable');
+});

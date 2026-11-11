@@ -56,6 +56,17 @@ Bấm **Backlog** rồi quét: tra mã trong sheet `back_log`, cột **"Còn l�
 
 `back_log` được tải cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). Cột được tìm theo đúng tên tiêu đề — đổi tên cột thì thanh trạng thái báo "backlog lỗi", các chế độ khác vẫn chạy.
 
+## Chế độ Chia tuyến
+
+Giống **Chia chọn** nhưng dùng tuyến thay cho khu vực: quét đơn → đọc to tuyến của đơn (vd "Tuyến 3"), màn hình hiện thêm phường/xã · quận/huyện. Tuyến lấy theo phường/xã trong địa chỉ, tra sheet `config_tuyen` (xem mục dưới).
+
+| Trường hợp | Giọng đọc |
+|---|---|
+| Có tuyến | "Tuyến 3" |
+| Xã của đơn chưa có trong `config_tuyen` | "Chưa có tuyến" → chạy `boSungTuyen` hoặc điền tay |
+| Địa chỉ không có phường/xã | "Chưa rõ phường xã" |
+| Đơn huỷ / không có | "Đơn đã huỷ" / "Không tìm thấy đơn" |
+
 ## Chế độ Tuyến (chia tuyến theo phường/xã)
 
 Bấm **Tuyến** để kiểm hàng lên xe theo tuyến:

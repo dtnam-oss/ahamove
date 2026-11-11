@@ -161,6 +161,26 @@ var Lookup = (function () {
       .map(function (r) { return { name: r.name, total: r.total, districts: Array.from(r.districts.values()) }; });
   }
 
+  /**
+   * "Chia tuyến" mode: like resolveScan, but speaks the order's route (sheet config_tuyen) instead of
+   * the district's sorting location. status: 'empty' | 'unavailable' | 'not_found' | 'cancelled' |
+   * 'no_ward' | 'unmapped' | 'ok'.
+   */
+  function resolveRouteSort(raw, index) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    if (!index.routes) return { status: 'unavailable', speech: 'Chưa có cấu hình tuyến' };
+    var code = findCode(raw, index.orders);
+    if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không tìm thấy đơn' };
+    var order = index.orders.get(code) || {};
+    if (isCancelled(order.status)) return { status: 'cancelled', code: code, speech: 'Đơn đã huỷ' };
+    var ward = String(order.ward || '').trim();
+    var district = String(order.district || '').trim();
+    if (!ward) return { status: 'no_ward', code: code, district: district, speech: 'Chưa rõ phường xã' };
+    var route = index.orderRoute.get(code);
+    if (!route) return { status: 'unmapped', code: code, ward: ward, district: district, speech: 'Chưa có tuyến' };
+    return { status: 'ok', code: code, ward: ward, district: district, route: route, speech: route };
+  }
+
   /** Codes of today's active (not cancelled) orders that belong to the given routes. */
   function routeOrderCodes(routeNames, index) {
     var codes = [];
@@ -217,6 +237,7 @@ var Lookup = (function () {
     routeSummary: routeSummary,
     routeOrderCodes: routeOrderCodes,
     resolveRouteCheck: resolveRouteCheck,
+    resolveRouteSort: resolveRouteSort,
     routeWardPoints: routeWardPoints,
     normalizeCell: normalizeCell,
     nextCell: nextCell,
