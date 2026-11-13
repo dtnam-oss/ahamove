@@ -76,7 +76,20 @@ function loadServer(tables, geo = {}) {
       return requests.map((r) => { assert.equal(r.muteHttpExceptions, true); return goong(r.url); });
     },
   };
-  const Utilities = { sleep() {} };
+  // formatDate supports the patterns the backend uses, in Vietnam time (UTC+7, no DST).
+  const Utilities = {
+    sleep() {},
+    formatDate: (date, tz, pattern) => {
+      assert.equal(tz, 'Asia/Ho_Chi_Minh');
+      const v = new Date(date.getTime() + 7 * 3600e3);
+      const p2 = (n) => String(n).padStart(2, '0');
+      const parts = {
+        yyyy: String(v.getUTCFullYear()), yy: String(v.getUTCFullYear()).slice(2), MM: p2(v.getUTCMonth() + 1),
+        dd: p2(v.getUTCDate()), HH: p2(v.getUTCHours()), mm: p2(v.getUTCMinutes()), ss: p2(v.getUTCSeconds()),
+      };
+      return pattern.replace(/yyyy|yy|MM|dd|HH|mm|ss/g, (k) => parts[k]);
+    },
+  };
   const ContentService = {
     MimeType: { JSON: 'json' },
     createTextOutput: (text) => ({ text, setMimeType(m) { this.mime = m; return this; } }),
@@ -90,6 +103,7 @@ function loadServer(tables, geo = {}) {
   vm.runInContext(read('gas/routes.js'), ctx);
   vm.runInContext(read('gas/goong.js'), ctx);
   vm.runInContext(read('gas/locate.js'), ctx);
+  vm.runInContext(read('gas/trips.js'), ctx);
   return ctx;
 }
 
@@ -231,106 +245,6 @@ test('code embedded in a QR payload (URL / JSON) is found', () => {
 test('empty scan is ignored', () => {
   const { Lookup, index } = setup();
   assert.equal(Lookup.resolveScan('   ', index).status, 'empty');
-});
-
-// ---------- Write mode: sheet data_don ----------
-
-/** In-memory sheet: cells[row][col] (1-based), sized maxRows x maxCols, recording formats. */
-function fakeScanSheet(filled = {}, maxRows = 1000, maxCols = 26) {
-  const cells = {};
-  const formats = {};
-  for (const [a1, v] of Object.entries(filled)) {
-    const m = /^([A-Z])(\d+)$/.exec(a1);
-    (cells[Number(m[2])] ||= {})[m[1].charCodeAt(0) - 64] = v;
-  }
-  const get = (r, c) => (cells[r] && cells[r][c]) || '';
-  const sheet = {
-    cells,
-    formats,
-    getLastRow: () => Math.max(0, ...Object.keys(cells).map(Number).filter((r) => Object.values(cells[r]).some(Boolean))),
-    getMaxRows: () => maxRows,
-    getMaxColumns: () => maxCols,
-    insertRowsAfter: (after, n) => { maxRows += n; },
-    getRange: (row, col, numRows = 1) => {
-      if (row + numRows - 1 > maxRows || col > maxCols) throw new Error('out of bounds');
-      return {
-        getDisplayValues: () => Array.from({ length: numRows }, (_, i) => [get(row + i, col)]),
-        setNumberFormat(f) { formats[`${row},${col}`] = f; return this; },
-        setValue(v) { (cells[row] ||= {})[col] = v; return this; },
-      };
-    },
-  };
-  return sheet;
-}
-
-function scanServer(sheet) {
-  return loadServer({ raw_data: DATA, config: CONFIG, data_don: sheet });
-}
-
-test('writeScan writes the code as text at the chosen cell', () => {
-  const sheet = fakeScanSheet();
-  const r = scanServer(sheet).writeScan('c3', ' gyegff9c ');
-  assert.deepEqual({ ...r }, { ok: true, cell: 'C3', code: 'GYEGFF9C' });
-  assert.equal(sheet.cells[3][3], 'GYEGFF9C');
-  assert.equal(sheet.formats['3,3'], '@');
-});
-
-test('writeScan skips taken cells and never overwrites', () => {
-  const sheet = fakeScanSheet({ C3: 'AAA1', C4: 'AAA2', C6: 'AAA4', D5: 'other column' });
-  const server = scanServer(sheet);
-  assert.equal(server.writeScan('C3', 'NEW1').cell, 'C5');
-  assert.equal(server.writeScan('C3', 'NEW2').cell, 'C7');
-  assert.equal(sheet.cells[3][3], 'AAA1');
-  assert.equal(sheet.cells[6][3], 'AAA4');
-});
-
-test('writeScan grows the sheet when the column is full to the last row', () => {
-  const sheet = fakeScanSheet({ A1: 'X', A2: 'Y' }, 2);
-  assert.equal(scanServer(sheet).writeScan('A1', 'Z1').cell, 'A3');
-  assert.equal(sheet.cells[3][1], 'Z1');
-});
-
-test('writeScan handles multi-letter columns', () => {
-  const sheet = fakeScanSheet({}, 1000, 30);
-  assert.equal(scanServer(sheet).writeScan('AB10', 'X1').cell, 'AB10');
-  assert.equal(sheet.cells[10][28], 'X1');
-});
-
-test('writeScan refuses a code already anywhere in the column, without writing', () => {
-  const sheet = fakeScanSheet({ C1: 'gyegff9c', C3: 'AAA1', D4: 'BBB2' });
-  const server = scanServer(sheet);
-  const dup = server.writeScan('C3', 'GYEGFF9C'); // above the start cell, different case
-  assert.deepEqual({ ...dup }, { ok: false, duplicate: true, cell: 'C1', code: 'GYEGFF9C' });
-  assert.equal(sheet.cells[4][3], undefined); // nothing written in C
-  assert.equal(server.writeScan('C3', 'BBB2').cell, 'C4'); // same value in another column is fine
-  assert.equal(server.writeScan('C3', 'BBB2').duplicate, true); // re-scan of what was just written
-  assert.equal(sheet.cells[5], undefined);
-});
-
-test('writeScan rejects bad cells, formula-like codes and a missing sheet', () => {
-  const server = scanServer(fakeScanSheet());
-  for (const cell of ['', 'C0', '3C', 'C3:C9', 'ABCD1']) assert.throws(() => server.writeScan(cell, 'X1'), /Ô không hợp lệ/);
-  for (const code of ['', '=HYPERLINK("x")', '+1', '@A', 'https://x.y/z']) assert.throws(() => server.writeScan('C3', code), /Mã không hợp lệ/);
-  assert.throws(() => scanServer(fakeScanSheet({}, 1000, 3)).writeScan('D1', 'X1'), /nằm ngoài sheet/);
-  assert.throws(() => loadServer({ raw_data: DATA, config: CONFIG }).writeScan('C3', 'X1'), /Không tìm thấy sheet "data_don"/);
-});
-
-test('doPost {action:write} returns the written cell, errors as {error}', () => {
-  const server = scanServer(fakeScanSheet({ C3: 'TAKEN' }));
-  const post = (body) => JSON.parse(server.doPost({ postData: { contents: body } }).text);
-  assert.equal(post(JSON.stringify({ action: 'write', cell: 'C3', code: 'GYEGFF9C' })).cell, 'C4');
-  assert.match(post(JSON.stringify({ action: 'delete' })).error, /Thao tác không hợp lệ/);
-  assert.ok(post('not json').error);
-});
-
-test('client cell helpers: normalizeCell / nextCell', () => {
-  const Lookup = loadLookup();
-  assert.equal(Lookup.normalizeCell(' c 3 '), 'C3');
-  assert.equal(Lookup.normalizeCell('C0'), '');
-  assert.equal(Lookup.normalizeCell('C3:C4'), '');
-  assert.equal(Lookup.nextCell('C3'), 'C4');
-  assert.equal(Lookup.nextCell('ab99'), 'AB100');
-  assert.equal(Lookup.nextCell('bad'), '');
 });
 
 // ---------- Backlog mode: sheet back_log ----------
@@ -714,4 +628,125 @@ test('Chia tuyến: speaks the order\'s route, like Chia chọn speaks the area'
   assert.equal(L2.resolveRouteSort('AAAA1111', noWard).speech, 'Chưa rõ phường xã'); // address without a ward
   const none = L2.buildIndex(loadServer({ raw_data: DATA, config: CONFIG }).getLookupData());
   assert.equal(L2.resolveRouteSort('GYEGFF9C', none).status, 'unavailable');
+});
+
+// ---------- Chuyến đi mode: sheet chuyen_di ----------
+
+const TRIP_HEADER = ['ma_chuyen', 'bks', 'thoi_gian', 'tracking_number'];
+
+function tripServer(rows) {
+  const tables = { raw_data: DATA, config: CONFIG };
+  if (rows) tables.chuyen_di = rows;
+  return { server: loadServer(tables), tables };
+}
+
+test('createTrip creates chuyen_di, saves one text row per order and numbers trips per day', () => {
+  const { server, tables } = tripServer();
+  const now = server.tripNow_();
+  const a = server.createTrip(' 29c-123.45 ', ['gyegff9c', 'AAAA1111', 'GYEGFF9C']);
+  assert.equal(a.ok, true);
+  assert.equal(a.ma_chuyen, `CD${now.stamp}-01`);
+  assert.equal(a.bks, '29C-123.45');
+  assert.match(a.thoi_gian, /^\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2}$/);
+  assert.deepEqual([...a.codes], ['GYEGFF9C', 'AAAA1111']); // repeats dropped, scan order kept
+  const b = server.createTrip('30A  12345', ['BBBB2222']);
+  assert.equal(b.ma_chuyen, `CD${now.stamp}-02`);
+  assert.equal(b.bks, '30A 12345');
+  assert.deepEqual(tables.chuyen_di.map((r) => [...r]), [
+    TRIP_HEADER,
+    [a.ma_chuyen, '29C-123.45', a.thoi_gian, 'GYEGFF9C'],
+    [a.ma_chuyen, '29C-123.45', a.thoi_gian, 'AAAA1111'],
+    [b.ma_chuyen, '30A 12345', b.thoi_gian, 'BBBB2222'],
+  ]);
+});
+
+test('createTrip refuses orders already in a trip today without writing; other days do not block', () => {
+  const { server, tables } = tripServer();
+  const first = server.createTrip('29C12345', ['GYEGFF9C']);
+  const rowsBefore = tables.chuyen_di.length;
+  const r = server.createTrip('30A12345', ['AAAA1111', 'gyegff9c']);
+  assert.equal(r.ok, false);
+  assert.deepEqual([...r.conflicts].map((c) => ({ ...c })), [{ code: 'GYEGFF9C', ma_chuyen: first.ma_chuyen, bks: '29C12345' }]);
+  assert.equal(tables.chuyen_di.length, rowsBefore);
+
+  const old = tripServer([TRIP_HEADER, ['CD000101-01', '29C12345', '01/01/2000 08:00:00', 'AAAA1111']]);
+  const again = old.server.createTrip('30A12345', ['AAAA1111']);
+  assert.equal(again.ok, true);
+  assert.match(again.ma_chuyen, /-01$/); // numbering restarts each day
+});
+
+test('createTrip rejects bad plates, empty or formula-like codes', () => {
+  const { server, tables } = tripServer();
+  for (const plate of ['', 'AB', '=1+1', '@29C', '29C-123.45-67890']) {
+    assert.throws(() => server.createTrip(plate, ['GYEGFF9C']), /Biển kiểm soát không hợp lệ/);
+  }
+  assert.throws(() => server.createTrip('29C12345', []), /Chuyến chưa có đơn/);
+  assert.throws(() => server.createTrip('29C12345', 'GYEGFF9C'), /Chuyến chưa có đơn/);
+  for (const code of ['', '=HYPERLINK("x")', '+1', 'https://x.y/z']) {
+    assert.throws(() => server.createTrip('29C12345', ['GYEGFF9C', code]), /Mã không hợp lệ/);
+  }
+  assert.throws(() => server.createTrip('29C12345', Array.from({ length: 2001 }, (_, i) => `C${i}`)), /quá 2000 đơn/);
+  assert.equal(tables.chuyen_di, undefined); // nothing created by refused trips
+});
+
+test('listTrips: trips of one day, newest first, with their codes; missing sheet is empty', () => {
+  const rows = [
+    TRIP_HEADER,
+    ['CD261112-01', '29C1', '12/11/2026 07:00:00', 'OLD1'],
+    ['CD261113-01', '29C1', '13/11/2026 08:00:00', 'A1'],
+    ['CD261113-01', '29C1', '13/11/2026 08:00:00', 'a2'],
+    ['', '', '', ''],
+    ['CD261113-02', '30A2', '13/11/2026 09:15:00', 'B1'],
+  ];
+  const { server } = tripServer(rows);
+  const r = server.listTrips('13/11/2026');
+  assert.equal(r.day, '13/11/2026');
+  assert.deepEqual(JSON.parse(JSON.stringify(r.trips)), [
+    { ma_chuyen: 'CD261113-02', bks: '30A2', thoi_gian: '13/11/2026 09:15:00', codes: ['B1'] },
+    { ma_chuyen: 'CD261113-01', bks: '29C1', thoi_gian: '13/11/2026 08:00:00', codes: ['A1', 'A2'] },
+  ]);
+  assert.equal(server.listTrips('01/01/2000').trips.length, 0);
+  assert.throws(() => server.listTrips('2026-11-13'), /Ngày không hợp lệ/);
+  const empty = tripServer().server.listTrips();
+  assert.equal(empty.day, empty.day.match(/^\d{2}\/\d{2}\/\d{4}$/)[0]); // default = today
+  assert.equal(empty.trips.length, 0);
+});
+
+test('trip endpoints: POST {action:trip} saves, GET ?action=trips lists, errors as {error}', () => {
+  const { server } = tripServer();
+  const post = (body) => JSON.parse(server.doPost({ postData: { contents: body } }).text);
+  const saved = post(JSON.stringify({ action: 'trip', plate: '29C12345', codes: ['GYEGFF9C'] }));
+  assert.equal(saved.ok, true);
+  assert.match(post(JSON.stringify({ action: 'write', cell: 'C3', code: 'X1' })).error, /Thao tác không hợp lệ/);
+  assert.match(post(JSON.stringify({ action: 'trip', plate: '', codes: ['X1'] })).error, /Biển kiểm soát/);
+  assert.ok(post('not json').error);
+  const get = (parameter) => JSON.parse(server.doGet({ parameter }).text);
+  assert.deepEqual([...get({ action: 'trips' }).trips[0].codes], ['GYEGFF9C']);
+  assert.match(get({ action: 'trips', day: 'x' }).error, /Ngày không hợp lệ/);
+});
+
+test('Chuyến đi scan: "Có" for a known order; refuses EOD returns, repeats, other trips, unknown codes', () => {
+  const data = [...DATA.slice(0, -1), ['2026-11-10', 'EEEE5555', 'ghn', ' need_return_to_partner_eod ', 'Quận Hoàng Mai', '']];
+  const Lookup = loadLookup();
+  const index = Lookup.buildIndex(loadServer({ raw_data: data, config: CONFIG }).getLookupData());
+  const none = new Map();
+  const ok = Lookup.resolveTripScan(' gyegff9c ', index, {}, none);
+  assert.deepEqual([ok.status, ok.code, ok.speech], ['ok', 'GYEGFF9C', 'Có']);
+  assert.equal(Lookup.resolveTripScan('https://x.vn/t?code=GYEGFF9C', index, {}, none).code, 'GYEGFF9C');
+  assert.equal(Lookup.resolveTripScan('CCCC3333', index, {}, none).speech, 'Có'); // only EOD returns are refused
+  const refused = Lookup.resolveTripScan('eeee5555', index, {}, none);
+  assert.deepEqual([refused.status, refused.speech], ['refused', 'Không, đơn trả đối tác']);
+  assert.equal(Lookup.resolveTripScan('GYEGFF9C', index, { GYEGFF9C: true }, none).speech, 'Đã quét');
+  const taken = new Map([['AAAA1111', { ma_chuyen: 'CD261113-01', bks: '29C12345' }]]);
+  const other = Lookup.resolveTripScan('AAAA1111', index, {}, taken);
+  assert.deepEqual([other.status, other.trip.ma_chuyen, other.speech], ['taken', 'CD261113-01', 'Đã ở chuyến xe 29C12345']);
+  assert.equal(Lookup.resolveTripScan('ZZZZ9999', index, {}, none).speech, 'Không tìm thấy đơn');
+  assert.equal(Lookup.resolveTripScan('   ', index, {}, none).status, 'empty');
+});
+
+test('client plate rule matches the server: normalizePlate', () => {
+  const Lookup = loadLookup();
+  assert.equal(Lookup.normalizePlate(' 29c-123.45 '), '29C-123.45');
+  assert.equal(Lookup.normalizePlate('30a   12345'), '30A 12345');
+  for (const bad of ['', 'AB', '=1+1', '29C-123.45-67890']) assert.equal(Lookup.normalizePlate(bad), '');
 });

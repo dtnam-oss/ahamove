@@ -63,29 +63,6 @@ html, body {
 .mode-btn { padding-left: 4px; padding-right: 4px; font-size: 0.85rem; }
 .mode-btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
 
-.write-panel {
-  background: var(--panel);
-  border-radius: 10px;
-  padding: 12px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-}
-.write-panel .field { display: flex; flex-direction: column; gap: 4px; }
-.cell-input {
-  width: 6.5em;
-  font-size: 1.3rem;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 2px solid #334155;
-  background: #020617;
-  color: var(--text);
-  text-transform: uppercase;
-}
-.cell-input:focus { outline: none; border-color: var(--primary); }
-#next-cell { flex-basis: 100%; }
-
 .scan-form { display: flex; gap: 8px; }
 .scan-input {
   flex: 1;
@@ -144,6 +121,57 @@ html, body {
 .route-count { font-size: 2rem; font-weight: 800; line-height: 1.1; }
 .route-count.is-done { color: var(--ok); }
 .route-actions { display: grid; gap: 6px; }
+
+.trip-home { display: grid; gap: 10px; }
+.trip-plate-form { background: var(--panel); border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+.plate-input {
+  font-size: 1.4rem;
+  padding: 12px;
+  border-radius: 10px;
+  border: 2px solid #334155;
+  background: #020617;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.plate-input:focus { outline: none; border-color: var(--primary); }
+.trip-plate-actions { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.trip-list-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.day-input {
+  font-size: 1rem;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #020617;
+  color: var(--text);
+  color-scheme: dark;
+}
+.trip-list { display: grid; gap: 8px; }
+.trip-item { background: var(--panel); border: 1px solid #334155; border-radius: 12px; }
+.trip-item.is-open { border-color: var(--primary); }
+/* Phone: each trip is a card - id and plate, then time and order count, the button on the right. */
+.trip-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px 10px; align-items: center; padding: 10px 12px; }
+.trip-row .trip-toggle { grid-column: 3; grid-row: 1 / span 2; }
+.trip-plate { font-weight: 700; }
+.trip-head { display: none; }
+.trip-detail { padding: 0 12px 12px; display: grid; gap: 8px; }
+.trip-codes {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+  font-size: 1rem;
+  background: #020617;
+  color: var(--text);
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 8px;
+  resize: vertical;
+}
+/* Tablet/desktop: the same rows line up as a table under a header row. */
+@media (min-width: 640px) {
+  .trip-row { grid-template-columns: 1.3fr 1.2fr 0.7fr 0.8fr 7em; } /* fixed button column keeps the header aligned */
+  .trip-row .trip-toggle { grid-column: auto; grid-row: auto; }
+  .trip-head { display: grid; color: var(--muted); font-size: 0.85rem; padding-top: 0; padding-bottom: 0; border: 1px solid transparent; }
+}
 
 
 .result-ok { background: #052e16; border-color: var(--ok); }

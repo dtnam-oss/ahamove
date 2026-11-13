@@ -5,7 +5,7 @@ Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong
 **Mở công cụ:** https://dtnam-oss.github.io/ahamove/
 
 - Giao diện: trang tĩnh trên GitHub Pages (`web/`).
-- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `POST {action:'write'}` ghi mã vào sheet `data_don`.
+- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `GET ?action=trips` / `POST {action:'trip'}` đọc/lưu chuyến đi ở sheet `chuyen_di`.
 
 Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
@@ -34,14 +34,28 @@ Dữ liệu được tải về trình duyệt một lần (chỉ mã → quận
 - **Camera:** bấm 📷. Nếu trình duyệt chặn camera trực tiếp, dùng nút **Chụp ảnh mã vận đơn**.
 - So khớp không phân biệt hoa/thường, khoảng trắng, dấu tiếng Việt (`Hòa` = `Hoà`). Nếu QR chứa URL/chuỗi dài, mã vận đơn bên trong vẫn được nhận.
 
-## Chế độ Ghi sheet
+## Chế độ Chuyến đi
 
-Bấm **Ghi sheet**, nhập **Cột nhập** của bạn (bắt buộc, vd `C`) và **Từ dòng** (không bắt buộc, mặc định 1), rồi quét như bình thường. Chưa nhập cột thì không quét được ("Chưa nhập cột").
+Thay cho chế độ Ghi sheet cũ (sheet `data_don` giữ nguyên, không còn được ghi).
 
-- Mỗi lần quét ghi **mã vận đơn** vào cột đó của sheet `data_don` (dạng text), lần sau ghi xuống dòng kế tiếp. Đọc to "Đã ghi ô C3".
-- Ô đã có dữ liệu thì tự nhảy xuống ô trống kế tiếp — không bao giờ ghi đè; nhiều người ghi chung một cột vẫn an toàn.
-- **Trùng mã:** nếu mã đã có ở bất kỳ ô nào trong cột đó → đọc "Trùng mã", không ghi, màn hình hiện ô đang chứa mã.
-- Chỉ nhận mã gồm chữ/số và `. _ -` (chặn chèn công thức). Ai có URL API đều ghi được vào `data_don`.
+**Tạo chuyến:** bấm **Chuyến đi** → **+ Tạo chuyến đi** → nhập **BKS** (4–15 ký tự: chữ, số, `-`, `.`, khoảng trắng) → quét từng đơn xếp lên xe → **Kết thúc chuyến**.
+
+| Khi quét | Giọng đọc | Vào chuyến? |
+|---|---|---|
+| Đơn có trong `raw_data`, trạng thái khác `NEED_RETURN_TO_PARTNER_EOD` | "Có" | có |
+| Trạng thái `NEED_RETURN_TO_PARTNER_EOD` | "Không, đơn trả đối tác" | không |
+| Đã quét trong chuyến này | "Đã quét" | không |
+| Đã nằm trong chuyến khác hôm nay (mọi máy) | "Đã ở chuyến xe `<BKS>`" | không |
+| Mã không có trong `raw_data` | "Không tìm thấy đơn" | không |
+
+- Mỗi lần quét được kiểm tra ngay trên máy (dữ liệu đã tải + danh sách chuyến hôm nay), không chờ mạng. Danh sách trạng thái bị từ chối: `TRIP_REFUSED_STATUSES` trong `web/lookup.js`.
+- Chuyến đang quét được lưu trên máy (tải lại trang không mất). Chỉ khi bấm **Kết thúc** mới gửi cả chuyến lên một lần; lỗi mạng thì chuyến vẫn giữ, bấm Kết thúc lại.
+- Khi lưu, server kiểm tra lại: đơn đã được máy khác đưa vào chuyến hôm nay thì cả chuyến chưa được lưu, các đơn đó bị bỏ khỏi chuyến và màn hình báo "Đã bỏ N đơn" → bấm Kết thúc lại.
+- Sheet `chuyen_di` (tự tạo ở lần lưu đầu): mỗi đơn một dòng `ma_chuyen | bks | thoi_gian | tracking_number`, dạng text. Mã chuyến `CD<yyMMdd>-<số thứ tự trong ngày>`, vd `CD261113-01`; giờ Việt Nam.
+
+**Danh sách chuyến:** ở màn hình Chuyến đi, chọn ngày (mặc định hôm nay) → các chuyến mới nhất trước, của mọi máy. Bấm **Xem đơn** để hiện danh sách mã (mỗi đơn một dòng) và **Copy** để dán sang ứng dụng khác. Điện thoại hiện dạng thẻ, màn hình rộng (≥ 640px) hiện dạng bảng.
+
+Ai có URL API đều xem và tạo được chuyến (giống các chế độ khác: chỉ có mã vận đơn và BKS, không có thông tin khách).
 
 ## Chế độ Backlog
 
@@ -118,10 +132,11 @@ web/                  giao diện (GitHub Pages, deploy tự động khi push ma
 gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
   Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
-                      doPost: ghi mã vào data_don (writeScan)
+                      doPost {action:'trip'}: lưu chuyến đi (trips.js)
   routes.js           taoCauHinhTuyen / boSungTuyen: gom phường/xã thành tuyến (config_tuyen)
   goong.js            gọi Goong geocode (kiểm tra đúng quận/huyện)
   locate.js           ?action=locate&code=: toạ độ một đơn cho bản đồ (cache toa_do_don)
+  trips.js            createTrip / listTrips: chuyến đi ở sheet chuyen_di (?action=trips&day=dd/MM/yyyy)
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages

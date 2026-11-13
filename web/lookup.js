@@ -209,21 +209,37 @@ var Lookup = (function () {
     return { status: 'ok', code: code, route: route, ward: order.ward || '', district: order.district || '', speech: 'Có' };
   }
 
+  /** "Chuyến đi" mode: orders in these statuses (raw_data, column status) cannot be loaded onto a trip. */
+  var TRIP_REFUSED_STATUSES = ['NEED_RETURN_TO_PARTNER_EOD'];
+
+  /** " 29c-123.45 " -> "29C-123.45"; "" when it is not a plausible plate (same rule as the server). */
+  function normalizePlate(value) {
+    var plate = String(value == null ? '' : value).trim().replace(/\s+/g, ' ').toUpperCase();
+    return /^[A-Z0-9][A-Z0-9 .-]{3,14}$/.test(plate) ? plate : '';
+  }
+
+  /**
+   * "Chuyến đi" mode: may this scan join the trip being loaded? Decided on the device (no network call).
+   * inTrip: {code: true} for this trip's orders; taken: Map code -> {ma_chuyen, bks} of trips saved today.
+   * status: 'empty' | 'not_found' | 'refused' | 'duplicate' | 'taken' | 'ok'.
+   */
+  function resolveTripScan(raw, index, inTrip, taken) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    var code = findCode(raw, index.orders);
+    if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không tìm thấy đơn' };
+    var orderStatus = String((index.orders.get(code) || {}).status || '').trim();
+    if (TRIP_REFUSED_STATUSES.indexOf(normalizeCode(orderStatus)) >= 0) {
+      return { status: 'refused', code: code, orderStatus: orderStatus, speech: 'Không, đơn trả đối tác' };
+    }
+    if (inTrip[code]) return { status: 'duplicate', code: code, speech: 'Đã quét' };
+    var other = taken && taken.get(code);
+    if (other) return { status: 'taken', code: code, trip: other, speech: 'Đã ở chuyến xe ' + other.bks };
+    return { status: 'ok', code: code, speech: 'Có' };
+  }
+
   /** Ward points of a route (for the map); [] when unknown. */
   function routeWardPoints(routeName, index) {
     return (index.routePoints && index.routePoints.get(routeName)) || [];
-  }
-
-  /** " c3 " -> "C3"; anything that is not a single A1 cell -> "". */
-  function normalizeCell(value) {
-    var cell = String(value == null ? '' : value).replace(/\s+/g, '').toUpperCase();
-    return /^[A-Z]{1,3}[1-9]\d{0,6}$/.test(cell) ? cell : '';
-  }
-
-  /** "C3" -> "C4": the cell right below. */
-  function nextCell(cell) {
-    var m = /^([A-Z]+)(\d+)$/.exec(normalizeCell(cell));
-    return m ? m[1] + (Number(m[2]) + 1) : '';
   }
 
   return {
@@ -239,7 +255,7 @@ var Lookup = (function () {
     resolveRouteCheck: resolveRouteCheck,
     resolveRouteSort: resolveRouteSort,
     routeWardPoints: routeWardPoints,
-    normalizeCell: normalizeCell,
-    nextCell: nextCell,
+    normalizePlate: normalizePlate,
+    resolveTripScan: resolveTripScan,
   };
 })();

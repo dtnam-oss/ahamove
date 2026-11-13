@@ -1,5 +1,6 @@
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
-// "Ghi sheet" mode (write each scanned code to sheet data_don, moving down one row per scan)
+// "Chuyến đi" mode (enter a truck plate, check each order loaded on the device, save the trip to sheet
+// chuyen_di once it is finished, and list/copy the trips of a day)
 // "Backlog" mode (speak the days left to the deadline from sheet back_log)
 // "Chia tuyến" mode (speak the order's route from sheet config_tuyen, like "Chia chọn" does for areas)
 // and "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck).
@@ -23,10 +24,20 @@
     district: $('result-district'),
     code: $('result-code'),
     modeBtns: document.querySelectorAll('.mode-btn'),
-    writePanel: $('write-panel'),
-    writeCol: $('write-col'),
-    writeRow: $('write-row'),
-    nextCell: $('next-cell'),
+    tripHome: $('trip-home'),
+    tripNew: $('trip-new'),
+    tripPlateForm: $('trip-plate-form'),
+    tripPlate: $('trip-plate'),
+    tripPlateHint: $('trip-plate-hint'),
+    tripPlateCancel: $('trip-plate-cancel'),
+    tripDay: $('trip-day'),
+    tripNote: $('trip-note'),
+    tripList: $('trip-list'),
+    tripProgress: $('trip-progress'),
+    tripPlateLabel: $('trip-plate-label'),
+    tripCount: $('trip-count'),
+    tripFinish: $('trip-finish'),
+    tripCancel: $('trip-cancel'),
     routePicker: $('route-picker'),
     routeList: $('route-list'),
     routeStart: $('route-start'),
@@ -45,9 +56,8 @@
   var lastCamera = { text: '', at: 0 };
   var CAMERA_REPEAT_MS = 2500; // ignore the same code re-read by the live camera within this window
 
-  var mode = 'sort'; // 'sort' = speak sorting location | 'write' = write code to data_don | 'backlog' = days left | 'route' = route
-  var writeCell = ''; // cell the next scan is written to (server moves further down if it is taken)
-  var writeQueue = Promise.resolve(); // writes run one at a time so cells fill in scan order
+  // 'sort' = sorting location | 'routesort' = route | 'trip' = load a trip | 'backlog' = days left | 'route' = route check
+  var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
   // ---------- Speech ----------
@@ -81,27 +91,49 @@
     } catch (e) { /* audio unavailable */ }
   }
 
+  // ---------- Backend calls ----------
+  function readJson(res) {
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return res.json().then(function (body) {
+      if (body.error) throw new Error(body.error);
+      return body;
+    });
+  }
+
+  /** Simple GET (no custom headers) so the Apps Script redirect to googleusercontent passes CORS. */
+  function apiGet(query) {
+    return fetch(window.APP_CONFIG.apiUrl + query).then(readJson);
+  }
+
+  /** text/plain keeps the POST a CORS simple request (no preflight, which Apps Script cannot answer). */
+  function apiPost(body) {
+    return fetch(window.APP_CONFIG.apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(body),
+    }).then(readJson);
+  }
+
+  function errorText(err) {
+    return (err && err.message) || String(err);
+  }
+
   // ---------- Data ----------
   function loadData(done) {
     els.status.textContent = 'Đang tải dữ liệu…';
     els.reloadBtn.disabled = true;
-    // Simple GET (no custom headers) so the Apps Script redirect to googleusercontent passes CORS.
-    fetch(window.APP_CONFIG.apiUrl + '?action=data&t=' + Date.now())
-      .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
+    apiGet('?action=data&t=' + Date.now())
       .then(function (body) {
-        if (body.error) throw new Error(body.error);
         index = Lookup.buildIndex(body);
         var time = new Date(body.updatedAt).toLocaleTimeString('vi-VN');
         var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
         var routeInfo = body.routes ? countRoutes(body.routes) + ' tuyến' : 'tuyến lỗi: ' + body.routesError;
         els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · cập nhật ' + time;
         if (mode === 'route') showRouteScreen(); // totals follow the reloaded raw_data
+        if (mode === 'trip' && !els.tripHome.hidden) loadTripList();
       })
       .catch(function (err) {
-        var msg = (err && err.message) || String(err);
+        var msg = errorText(err);
         els.status.textContent = 'Lỗi tải dữ liệu: ' + msg;
         showResult('error', 'Lỗi tải dữ liệu', msg);
         speak('Lỗi tải dữ liệu');
@@ -121,8 +153,8 @@
   }
 
   function handleScan(raw) {
-    if (mode === 'write') { queueWrite(raw); return; }
     if (!index) { speak('Chưa tải dữ liệu'); return; }
+    if (mode === 'trip') { handleTripScan(raw); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
     if (mode === 'route') { handleRouteScan(raw); return; }
     if (mode === 'routesort') { handleRouteSort(raw); return; }
@@ -136,91 +168,23 @@
     speak(r.speech);
   }
 
-  // ---------- Write mode (sheet data_don) ----------
-  function setWriteCell(cell) {
-    writeCell = cell;
-    var col = (/^[A-Z]+/.exec(cell) || [''])[0];
-    els.nextCell.textContent = cell
-      ? 'Sheet data_don · lần quét tới ghi vào ô ' + cell + ' (ô đã có thì xuống ô trống kế tiếp) · kiểm tra trùng trên cả cột ' + col
-      : 'Nhập cột của bạn (ví dụ C) trước khi quét';
-  }
-
-  /** Column (required) + start row (default 1) -> start cell, e.g. "C" + "" -> "C1". */
-  function updateWriteCell() {
-    var col = els.writeCol.value.replace(/\s+/g, '').toUpperCase();
-    var row = els.writeRow.value.replace(/\s+/g, '') || '1';
-    var hasCol = /^[A-Z]{1,3}$/.test(col);
-    setWriteCell(hasCol ? Lookup.normalizeCell(col + row) : '');
-    if (hasCol && !writeCell) els.nextCell.textContent = 'Dòng bắt đầu không hợp lệ';
-  }
-
-  function queueWrite(raw) {
-    if (!Lookup.normalizeCode(raw)) return;
-    // Prefer the known tracking number inside a QR payload (URL/JSON); otherwise write the scan as-is.
-    var code = (index && Lookup.findCode(raw, index.orders)) || Lookup.normalizeCode(raw);
-    writeQueue = writeQueue.then(function () { return writeCode(code); });
-  }
-
-  function writeCode(code) {
-    if (!writeCell) {
-      var noCol = !els.writeCol.value.trim();
-      showResult('error', noCol ? 'Chưa nhập cột' : 'Cột/dòng không hợp lệ', els.nextCell.textContent, code);
-      speak(noCol ? 'Chưa nhập cột' : 'Cột không hợp lệ');
-      return;
-    }
-    showResult('pending', 'Đang ghi…', 'Ô ' + writeCell, code);
-    // text/plain keeps this a CORS simple request (no preflight, which Apps Script cannot answer).
-    return fetch(window.APP_CONFIG.apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ action: 'write', cell: writeCell, code: code }),
-    })
-      .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
-      .then(function (body) {
-        if (body.error) throw new Error(body.error);
-        // The server refuses codes already present in the column (also catches camera re-reads).
-        if (body.duplicate) {
-          showResult('unmapped', 'Trùng mã', 'Đã có ở ô ' + body.cell + ' — không ghi', body.code);
-          speak('Trùng mã');
-          return;
-        }
-        setWriteCell(Lookup.nextCell(body.cell));
-        showResult('ok', 'Đã ghi ô ' + body.cell, 'Tiếp theo: ô ' + writeCell, body.code);
-        speak('Đã ghi ô ' + body.cell);
-      })
-      .catch(function (err) {
-        showResult('error', 'Ghi thất bại', (err && err.message) || String(err), code);
-        speak('Ghi thất bại');
-      });
-  }
-
   function setMode(next) {
     mode = next;
     Array.prototype.forEach.call(els.modeBtns, function (b) {
       b.setAttribute('aria-pressed', String(b.getAttribute('data-mode') === mode));
     });
-    els.writePanel.hidden = mode !== 'write';
     leaveRouteScreens();
+    leaveTripScreens();
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
-    var hints = { write: 'Chế độ ghi sheet data_don', backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến' };
+    if (mode === 'trip') { showTripScreen(); return; }
+    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
-    if (mode === 'write' && !writeCell) els.writeCol.focus(); else focusInput();
+    focusInput();
   }
 
   Array.prototype.forEach.call(els.modeBtns, function (b) {
     b.addEventListener('click', function () { setMode(b.getAttribute('data-mode')); });
   });
-
-  [els.writeCol, els.writeRow].forEach(function (input) {
-    input.addEventListener('input', updateWriteCell);
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); focusInput(); }
-    });
-  });
-  updateWriteCell();
 
   function handleBacklog(raw) {
     var r = Lookup.resolveBacklog(raw, index);
@@ -436,23 +400,277 @@
         OrderMap.addPin({ code: code, lat: p.lat, lng: p.lng });
       })
       .catch(function (err) {
-        els.mapNote.textContent = 'Không định vị được đơn ' + code + ': ' + ((err && err.message) || err);
+        els.mapNote.textContent = 'Không định vị được đơn ' + code + ': ' + errorText(err);
       });
   }
 
   function locate(code) {
     if (orderPoints[code]) return Promise.resolve(orderPoints[code]);
-    return fetch(window.APP_CONFIG.apiUrl + '?action=locate&code=' + encodeURIComponent(code))
-      .then(function (res) {
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        return res.json();
-      })
+    return apiGet('?action=locate&code=' + encodeURIComponent(code)).then(function (body) {
+      orderPoints[code] = body;
+      return body;
+    });
+  }
+
+  // ---------- Chuyến đi mode: plate -> scan orders (checked on this device) -> save the trip once ----------
+  // Scans never wait for the network: each order is checked against the loaded raw_data and today's trips.
+  // The trip being loaded stays in this browser until it is saved, so a reload or a failed save loses nothing.
+  var TRIP_DRAFT_KEY = 'tripDraft.v1';
+  var tripDraft = null; // {plate, codes: [...]} of the trip being loaded, or null
+  var tripIn = {}; // code -> true for tripDraft.codes (constant-time repeat check)
+  var takenToday = new Map(); // code -> {ma_chuyen, bks} of trips saved today, on any device
+  var tripSaving = false;
+  var tripListSeq = 0; // only the latest list request may render
+
+  function setTripDraft(draft) {
+    tripDraft = draft;
+    tripIn = {};
+    if (draft) draft.codes.forEach(function (c) { tripIn[c] = true; });
+    try {
+      if (draft) localStorage.setItem(TRIP_DRAFT_KEY, JSON.stringify(draft));
+      else localStorage.removeItem(TRIP_DRAFT_KEY);
+    } catch (e) { /* storage blocked: the trip still works until the page is closed */ }
+  }
+
+  function restoreTripDraft() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(TRIP_DRAFT_KEY) || 'null');
+      if (saved && saved.plate && Array.isArray(saved.codes)) setTripDraft(saved);
+    } catch (e) { /* corrupt or blocked: start without a draft */ }
+  }
+
+  function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+  /** Value of <input type=date> for today on this device: "yyyy-mm-dd". */
+  function todayInput() {
+    var d = new Date();
+    return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  }
+
+  /** "2026-11-13" -> "13/11/2026" (the day format of sheet chuyen_di). */
+  function inputToDay(value) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value || '');
+    return m ? m[3] + '/' + m[2] + '/' + m[1] : '';
+  }
+
+  /** Trips of a day (newest first); no day = today on the server. */
+  function fetchTrips(day) {
+    return apiGet('?action=trips' + (day ? '&day=' + encodeURIComponent(day) : '') + '&t=' + Date.now());
+  }
+
+  function setTaken(trips) {
+    takenToday = new Map();
+    trips.forEach(function (t) {
+      t.codes.forEach(function (c) { takenToday.set(c, { ma_chuyen: t.ma_chuyen, bks: t.bks }); });
+    });
+  }
+
+  function refreshTaken() {
+    return fetchTrips('').then(function (body) { setTaken(body.trips); }, function () { /* the server re-checks on save */ });
+  }
+
+  function leaveTripScreens() {
+    els.tripHome.hidden = true;
+    els.tripProgress.hidden = true;
+  }
+
+  function showTripScreen() {
+    if (tripDraft) enterTripScan(); else showTripHome();
+  }
+
+  function showTripHome(message) {
+    els.tripHome.hidden = false;
+    els.tripProgress.hidden = true;
+    els.form.hidden = true;
+    els.result.hidden = true;
+    els.tripPlateForm.hidden = true;
+    els.tripNew.hidden = false;
+    loadTripList(message);
+  }
+
+  function loadTripList(message) {
+    if (!els.tripDay.value) els.tripDay.value = todayInput();
+    var isToday = els.tripDay.value === todayInput();
+    var seq = ++tripListSeq;
+    els.tripNote.textContent = message || 'Đang tải danh sách chuyến…';
+    fetchTrips(isToday ? '' : inputToDay(els.tripDay.value))
       .then(function (body) {
-        if (body.error) throw new Error(body.error);
-        orderPoints[code] = body;
-        return body;
+        if (isToday) setTaken(body.trips);
+        if (seq !== tripListSeq) return;
+        renderTrips(body.trips);
+        var orders = body.trips.reduce(function (n, t) { return n + t.codes.length; }, 0);
+        els.tripNote.textContent = message || body.trips.length + ' chuyến · ' + orders + ' đơn · ngày ' + body.day;
+      })
+      .catch(function (err) {
+        if (seq === tripListSeq) els.tripNote.textContent = 'Lỗi tải danh sách chuyến: ' + errorText(err);
       });
   }
+
+  /** One row per trip: a card on phones, a table row on wider screens (CSS); "Xem đơn" opens the codes. */
+  function renderTrips(trips) {
+    els.tripList.textContent = '';
+    if (!trips.length) { els.tripList.appendChild(el('div', 'muted', 'Chưa có chuyến nào trong ngày này.')); return; }
+    var head = el('div', 'trip-row trip-head');
+    ['Mã chuyến', 'BKS', 'Giờ tạo', 'Số đơn', ''].forEach(function (t) { head.appendChild(el('span', '', t)); });
+    els.tripList.appendChild(head);
+    trips.forEach(function (trip) {
+      var item = el('div', 'trip-item');
+      var row = el('div', 'trip-row');
+      row.appendChild(el('b', 'trip-id', trip.ma_chuyen));
+      row.appendChild(el('span', 'trip-plate', trip.bks));
+      row.appendChild(el('span', 'trip-time muted', trip.thoi_gian.slice(11, 16)));
+      row.appendChild(el('span', 'trip-total', trip.codes.length + ' đơn'));
+      var toggle = el('button', 'btn trip-toggle', 'Xem đơn');
+      toggle.type = 'button';
+      row.appendChild(toggle);
+      item.appendChild(row);
+
+      var detail = el('div', 'trip-detail');
+      detail.hidden = true;
+      var codes = el('textarea', 'trip-codes');
+      codes.readOnly = true;
+      codes.value = trip.codes.join('\n'); // one order per line, ready to paste elsewhere
+      codes.rows = Math.min(trip.codes.length, 10);
+      codes.setAttribute('aria-label', 'Đơn của chuyến ' + trip.ma_chuyen);
+      var copy = el('button', 'btn btn-primary', 'Copy ' + trip.codes.length + ' đơn');
+      copy.type = 'button';
+      copy.addEventListener('click', function () { copyCodes(codes, copy); });
+      detail.appendChild(codes);
+      detail.appendChild(copy);
+      item.appendChild(detail);
+
+      toggle.addEventListener('click', function () {
+        detail.hidden = !detail.hidden;
+        toggle.textContent = detail.hidden ? 'Xem đơn' : 'Ẩn đơn';
+        item.classList.toggle('is-open', !detail.hidden);
+      });
+      els.tripList.appendChild(item);
+    });
+  }
+
+  function copyCodes(textarea, button) {
+    var label = button.textContent;
+    var flash = function (text) {
+      button.textContent = text;
+      setTimeout(function () { button.textContent = label; }, 2000);
+    };
+    var fallback = function () {
+      textarea.focus();
+      textarea.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { /* unsupported */ }
+      flash(ok ? 'Đã copy' : 'Đã chọn, bấm giữ để copy');
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(textarea.value).then(function () { flash('Đã copy'); }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  els.tripDay.addEventListener('change', function () { loadTripList(); });
+
+  els.tripNew.addEventListener('click', function () {
+    els.tripNew.hidden = true;
+    els.tripPlateForm.hidden = false;
+    els.tripPlate.value = '';
+    els.tripPlateHint.textContent = '';
+    els.tripPlate.focus();
+  });
+
+  els.tripPlateCancel.addEventListener('click', function () {
+    els.tripPlateForm.hidden = true;
+    els.tripNew.hidden = false;
+  });
+
+  els.tripPlateForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var plate = Lookup.normalizePlate(els.tripPlate.value);
+    if (!plate) {
+      els.tripPlateHint.textContent = 'Biển kiểm soát không hợp lệ (4–15 ký tự: chữ, số, dấu - . và khoảng trắng)';
+      els.tripPlate.focus();
+      return;
+    }
+    setTripDraft({ plate: plate, codes: [] });
+    enterTripScan();
+  });
+
+  function enterTripScan() {
+    els.tripHome.hidden = true;
+    els.tripProgress.hidden = false;
+    els.form.hidden = false;
+    els.result.hidden = false;
+    els.tripPlateLabel.textContent = 'Chuyến xe ' + tripDraft.plate;
+    updateTripCount();
+    showResult('idle', 'Sẵn sàng quét', 'Quét đơn xếp lên xe ' + tripDraft.plate);
+    refreshTaken();
+    focusInput();
+  }
+
+  function updateTripCount() {
+    els.tripCount.textContent = tripDraft.codes.length + ' đơn';
+    els.tripFinish.disabled = tripSaving || !tripDraft.codes.length;
+  }
+
+  function handleTripScan(raw) {
+    if (!tripDraft || els.tripProgress.hidden) return; // plate not entered yet
+    var r = Lookup.resolveTripScan(raw, index, tripIn, takenToday);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') {
+      tripDraft.codes.push(r.code);
+      setTripDraft(tripDraft);
+      updateTripCount();
+      showResult('ok', 'Có', tripDraft.codes.length + ' đơn · xe ' + tripDraft.plate, r.code);
+    } else if (r.status === 'duplicate') showResult('unmapped', 'Đã quét', 'Đơn đã có trong chuyến này', r.code);
+    else if (r.status === 'refused') showResult('not_found', 'Không hợp lệ', 'Trạng thái ' + r.orderStatus, r.code);
+    else if (r.status === 'taken') showResult('not_found', 'Đã ở chuyến khác', r.trip.ma_chuyen + ' · xe ' + r.trip.bks, r.code);
+    else showResult('not_found', 'Không tìm thấy đơn', 'Không có trong raw_data', r.input);
+    speak(r.speech);
+  }
+
+  els.tripFinish.addEventListener('click', function () {
+    if (!tripDraft || !tripDraft.codes.length || tripSaving) return;
+    if (!window.confirm('Kết thúc chuyến xe ' + tripDraft.plate + ' với ' + tripDraft.codes.length + ' đơn?')) return;
+    var draft = tripDraft;
+    tripSaving = true;
+    updateTripCount();
+    showResult('pending', 'Đang lưu chuyến…', draft.codes.length + ' đơn · xe ' + draft.plate);
+    apiPost({ action: 'trip', plate: draft.plate, codes: draft.codes })
+      .then(function (body) {
+        if (body.conflicts) {
+          // Another device saved some of these orders first: drop them and let the user finish again.
+          body.conflicts.forEach(function (c) { takenToday.set(c.code, { ma_chuyen: c.ma_chuyen, bks: c.bks }); });
+          draft.codes = draft.codes.filter(function (c) { return !takenToday.has(c); });
+          setTripDraft(draft);
+          var where = body.conflicts.map(function (c) { return c.code + ' (' + c.ma_chuyen + ')'; }).join(', ');
+          showResult('unmapped', 'Đã bỏ ' + body.conflicts.length + ' đơn', 'Đã ở chuyến khác: ' + where + '. Bấm Kết thúc lại để lưu.');
+          speak('Có đơn đã ở chuyến khác');
+          return;
+        }
+        body.codes.forEach(function (c) { takenToday.set(c, { ma_chuyen: body.ma_chuyen, bks: body.bks }); });
+        setTripDraft(null);
+        els.tripDay.value = todayInput();
+        showTripHome('Đã tạo chuyến ' + body.ma_chuyen + ' · xe ' + body.bks + ' · ' + body.codes.length + ' đơn');
+        speak('Đã tạo chuyến');
+      })
+      .catch(function (err) {
+        showResult('error', 'Lưu chuyến thất bại', errorText(err) + ' — chuyến vẫn giữ trên máy, bấm Kết thúc để thử lại');
+        speak('Lưu chuyến thất bại');
+      })
+      .then(function () {
+        tripSaving = false;
+        if (tripDraft) updateTripCount();
+      });
+  });
+
+  els.tripCancel.addEventListener('click', function () {
+    if (tripSaving) return;
+    if (!window.confirm('Huỷ chuyến xe ' + tripDraft.plate + '? ' + tripDraft.codes.length + ' đơn đã quét sẽ bị xoá khỏi máy.')) return;
+    setTripDraft(null);
+    showTripHome();
+  });
+
+  restoreTripDraft();
 
   function focusInput() {
     // Keep focus for the barcode gun, but not while the camera is open (avoids popping the mobile keyboard).

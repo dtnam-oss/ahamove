@@ -35,25 +35,43 @@
     <div class="mode-bar" role="group" aria-label="Chế độ">
       <button type="button" class="btn mode-btn" data-mode="sort" aria-pressed="true">Chia chọn</button>
       <button type="button" class="btn mode-btn" data-mode="routesort" aria-pressed="false">Chia tuyến</button>
-      <button type="button" class="btn mode-btn" data-mode="write" aria-pressed="false">Ghi sheet</button>
+      <button type="button" class="btn mode-btn" data-mode="trip" aria-pressed="false">Chuyến đi</button>
       <button type="button" class="btn mode-btn" data-mode="backlog" aria-pressed="false">Backlog</button>
       <button type="button" class="btn mode-btn" data-mode="route" aria-pressed="false">Tuyến</button>
     </div>
 
-    <!-- Write mode: each scan goes to the user's own column of sheet data_don, moving down one row;
-         duplicates are checked against that whole column. The column must be set before scanning. -->
-    <div id="write-panel" class="write-panel" hidden>
-      <div class="field">
-        <label for="write-col">Cột nhập <b>(bắt buộc)</b></label>
-        <input id="write-col" class="cell-input" type="text" placeholder="C" maxlength="3"
-               autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="next" />
+    <!-- Chuyến đi mode, home: create a trip (plate first) and the trips of a day from every device (sheet chuyen_di). -->
+    <section id="trip-home" class="trip-home" hidden>
+      <button id="trip-new" class="btn btn-primary btn-lg" type="button">+ Tạo chuyến đi</button>
+      <form id="trip-plate-form" class="trip-plate-form" autocomplete="off" hidden>
+        <label for="trip-plate">Biển kiểm soát (BKS)</label>
+        <input id="trip-plate" class="plate-input" type="text" placeholder="29C-123.45" maxlength="15"
+               autocapitalize="characters" spellcheck="false" enterkeyhint="go" />
+        <div id="trip-plate-hint" class="muted" aria-live="polite"></div>
+        <div class="trip-plate-actions">
+          <button class="btn btn-primary" type="submit">Bắt đầu quét</button>
+          <button id="trip-plate-cancel" class="btn" type="button">Huỷ</button>
+        </div>
+      </form>
+      <div class="trip-list-bar">
+        <b>Danh sách chuyến</b>
+        <label for="trip-day" class="sr-only">Ngày</label>
+        <input id="trip-day" class="day-input" type="date" />
       </div>
-      <div class="field">
-        <label for="write-row">Từ dòng</label>
-        <input id="write-row" class="cell-input" type="text" inputmode="numeric" placeholder="1" maxlength="7"
-               autocomplete="off" enterkeyhint="done" />
+      <div id="trip-note" class="muted" aria-live="polite"></div>
+      <div id="trip-list" class="trip-list"></div>
+    </section>
+
+    <!-- Chuyến đi mode, scanning: the trip being loaded (kept on this device until it is finished). -->
+    <div id="trip-progress" class="route-progress" hidden>
+      <div class="route-progress-info">
+        <div id="trip-plate-label" class="muted"></div>
+        <div id="trip-count" class="route-count">0 đơn</div>
       </div>
-      <div id="next-cell" class="muted"></div>
+      <div class="route-actions">
+        <button id="trip-finish" class="btn btn-primary" type="button" disabled>Kết thúc chuyến</button>
+        <button id="trip-cancel" class="btn" type="button">Huỷ chuyến</button>
+      </div>
     </div>
 
     <!-- Tuyến mode, step 1: pick the routes to load (districts expand to their wards). -->
