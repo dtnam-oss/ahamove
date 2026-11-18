@@ -15,18 +15,27 @@ function loadLookup() {
   return ctx.Lookup;
 }
 
-/** Sheet backed by a 2D array (read as display strings, writable through getRange().setValues()). */
+/** Sheet backed by a 2D array (read as display strings, writable cell by cell through getRange().setValues()). */
 function gridSheet(values) {
+  const width = () => Math.max(0, ...values.map((r) => r.length));
+  const cell = (v) => (v == null ? '' : String(v));
   return {
     values,
-    getDataRange: () => ({ getDisplayValues: () => values.map((r) => r.map((v) => String(v))) }),
+    getDataRange: () => ({ getDisplayValues: () => values.map((r) => Array.from({ length: width() }, (_, j) => cell(r[j]))) }),
     getLastRow: () => values.length,
+    getLastColumn: () => width(),
     setFrozenRows() {},
     getRange: (row, col, numRows, numCols) => ({
       setNumberFormat() { return this; },
+      getDisplayValues: () => Array.from({ length: numRows }, (_, i) => Array.from({ length: numCols }, (_, j) => cell((values[row - 1 + i] || [])[col - 1 + j]))),
       setValues(v) {
         assert.equal(v.length, numRows);
-        v.forEach((r, i) => { assert.equal(r.length, numCols); values[row - 1 + i] = r.slice(); });
+        v.forEach((r, i) => {
+          assert.equal(r.length, numCols);
+          while (values.length < row + i) values.push([]);
+          const target = values[row - 1 + i];
+          r.forEach((x, j) => { target[col - 1 + j] = x; });
+        });
         return this;
       },
     }),
@@ -104,6 +113,7 @@ function loadServer(tables, geo = {}) {
   vm.runInContext(read('gas/goong.js'), ctx);
   vm.runInContext(read('gas/locate.js'), ctx);
   vm.runInContext(read('gas/trips.js'), ctx);
+  vm.runInContext(read('gas/dong-kiem.js'), ctx);
   return ctx;
 }
 
@@ -632,13 +642,15 @@ test('Chia tuyến: speaks the order\'s route, like Chia chọn speaks the area'
 
 // ---------- Chuyến đi mode: sheet chuyen_di ----------
 
-const TRIP_HEADER = ['ma_chuyen', 'bks', 'thoi_gian', 'tracking_number'];
+const TRIP_HEADER = ['ma_chuyen', 'bks', 'thoi_gian', 'tracking_number', 'ket_thuc', 'ban_kiem'];
 
 function tripServer(rows) {
   const tables = { raw_data: DATA, config: CONFIG };
   if (rows) tables.chuyen_di = rows;
   return { server: loadServer(tables), tables };
 }
+
+const plain = (x) => JSON.parse(JSON.stringify(x)); // VM-realm objects -> plain host objects
 
 test('createTrip creates chuyen_di, saves one text row per order and numbers trips per day', () => {
   const { server, tables } = tripServer();
@@ -652,25 +664,31 @@ test('createTrip creates chuyen_di, saves one text row per order and numbers tri
   const b = server.createTrip('30A  12345', ['BBBB2222']);
   assert.equal(b.ma_chuyen, `CD${now.stamp}-02`);
   assert.equal(b.bks, '30A 12345');
-  assert.deepEqual(tables.chuyen_di.map((r) => [...r]), [
+  assert.deepEqual(plain(tables.chuyen_di), [
     TRIP_HEADER,
-    [a.ma_chuyen, '29C-123.45', a.thoi_gian, 'GYEGFF9C'],
-    [a.ma_chuyen, '29C-123.45', a.thoi_gian, 'AAAA1111'],
-    [b.ma_chuyen, '30A 12345', b.thoi_gian, 'BBBB2222'],
+    [a.ma_chuyen, '29C-123.45', a.thoi_gian, 'GYEGFF9C', '', ''],
+    [a.ma_chuyen, '29C-123.45', a.thoi_gian, 'AAAA1111', '', ''],
+    [b.ma_chuyen, '30A 12345', b.thoi_gian, 'BBBB2222', '', ''],
   ]);
 });
 
-test('createTrip refuses orders already in a trip today without writing; other days do not block', () => {
+test('createTrip refuses orders on a trip not ended yet, any day, without writing; ended trips free them', () => {
   const { server, tables } = tripServer();
   const first = server.createTrip('29C12345', ['GYEGFF9C']);
   const rowsBefore = tables.chuyen_di.length;
   const r = server.createTrip('30A12345', ['AAAA1111', 'gyegff9c']);
   assert.equal(r.ok, false);
-  assert.deepEqual([...r.conflicts].map((c) => ({ ...c })), [{ code: 'GYEGFF9C', ma_chuyen: first.ma_chuyen, bks: '29C12345' }]);
+  assert.deepEqual(plain(r.conflicts), [{ code: 'GYEGFF9C', ma_chuyen: first.ma_chuyen, bks: '29C12345' }]);
   assert.equal(tables.chuyen_di.length, rowsBefore);
 
-  const old = tripServer([TRIP_HEADER, ['CD000101-01', '29C12345', '01/01/2000 08:00:00', 'AAAA1111']]);
-  const again = old.server.createTrip('30A12345', ['AAAA1111']);
+  // Old 4-column sheet (before trips could end): an open trip of an earlier day still holds its orders.
+  const legacy = [['ma_chuyen', 'bks', 'thoi_gian', 'tracking_number'], ['CD000101-01', '29C12345', '01/01/2000 08:00:00', 'AAAA1111']];
+  const old = tripServer(legacy);
+  assert.deepEqual(plain(old.server.createTrip('30A12345', ['AAAA1111']).conflicts), [{ code: 'AAAA1111', ma_chuyen: 'CD000101-01', bks: '29C12345' }]);
+  assert.deepEqual(plain(legacy[0]), TRIP_HEADER); // the new headers were added on the way
+
+  const ended = tripServer([TRIP_HEADER, ['CD000101-01', '29C12345', '01/01/2000 08:00:00', 'AAAA1111', '01/01/2000 18:00:00', '']]);
+  const again = ended.server.createTrip('30A12345', ['AAAA1111']);
   assert.equal(again.ok, true);
   assert.match(again.ma_chuyen, /-01$/); // numbering restarts each day
 });
@@ -689,39 +707,66 @@ test('createTrip rejects bad plates, empty or formula-like codes', () => {
   assert.equal(tables.chuyen_di, undefined); // nothing created by refused trips
 });
 
-test('listTrips: trips of one day, newest first, with their codes; missing sheet is empty', () => {
+test('endTrip stamps every row of the trip, marks FAILED orders checked or missing, and frees the orders', () => {
+  const { server, tables } = tripServer();
+  const a = server.createTrip('29C12345', ['GYEGFF9C', 'AAAA1111', 'BBBB2222']);
+  const b = server.createTrip('30A12345', ['CCCC3333']);
+  const r = server.endTrip(a.ma_chuyen.toLowerCase(), ['AAAA1111', 'BBBB2222'], ['bbbb2222']);
+  assert.equal(r.ok, true);
+  assert.equal(r.ma_chuyen, a.ma_chuyen);
+  assert.deepEqual([...r.missing], ['AAAA1111']);
+  assert.deepEqual(plain(tables.chuyen_di.slice(1).map((row) => row.slice(3))), [
+    ['GYEGFF9C', r.ket_thuc, ''],
+    ['AAAA1111', r.ket_thuc, 'Thiếu'],
+    ['BBBB2222', r.ket_thuc, 'Đã kiểm'],
+    ['CCCC3333', '', ''], // the other trip is untouched
+  ]);
+  assert.throws(() => server.endTrip(a.ma_chuyen, [], []), /đã kết thúc lúc/);
+  assert.throws(() => server.endTrip('CD000000-99', [], []), /Không tìm thấy chuyến/);
+  assert.throws(() => server.endTrip(b.ma_chuyen, ['GYEGFF9C'], []), /Đơn không thuộc chuyến/);
+  assert.throws(() => server.endTrip('', [], []), /Thiếu mã chuyến/);
+  assert.equal(server.createTrip('31B12345', ['AAAA1111']).ok, true); // ended trip no longer holds its orders
+  assert.deepEqual(plain(server.openTrips().trips.map((t) => t.ma_chuyen)), [b.ma_chuyen, `CD${server.tripNow_().stamp}-03`]);
+});
+
+test('listTrips: trips of one day, newest first, with codes, end time and missing FAILED orders', () => {
   const rows = [
-    TRIP_HEADER,
+    ['ma_chuyen', 'bks', 'thoi_gian', 'tracking_number'], // sheet made before trips could end
     ['CD261112-01', '29C1', '12/11/2026 07:00:00', 'OLD1'],
-    ['CD261113-01', '29C1', '13/11/2026 08:00:00', 'A1'],
-    ['CD261113-01', '29C1', '13/11/2026 08:00:00', 'a2'],
+    ['CD261113-01', '29C1', '13/11/2026 08:00:00', 'A1', '13/11/2026 18:00:00', 'Thiếu'],
+    ['CD261113-01', '29C1', '13/11/2026 08:00:00', 'a2', '13/11/2026 18:00:00', 'Đã kiểm'],
     ['', '', '', ''],
     ['CD261113-02', '30A2', '13/11/2026 09:15:00', 'B1'],
   ];
   const { server } = tripServer(rows);
   const r = server.listTrips('13/11/2026');
   assert.equal(r.day, '13/11/2026');
-  assert.deepEqual(JSON.parse(JSON.stringify(r.trips)), [
-    { ma_chuyen: 'CD261113-02', bks: '30A2', thoi_gian: '13/11/2026 09:15:00', codes: ['B1'] },
-    { ma_chuyen: 'CD261113-01', bks: '29C1', thoi_gian: '13/11/2026 08:00:00', codes: ['A1', 'A2'] },
+  assert.deepEqual(plain(r.trips), [
+    { ma_chuyen: 'CD261113-02', bks: '30A2', thoi_gian: '13/11/2026 09:15:00', ket_thuc: '', codes: ['B1'], missing: [] },
+    { ma_chuyen: 'CD261113-01', bks: '29C1', thoi_gian: '13/11/2026 08:00:00', ket_thuc: '13/11/2026 18:00:00', codes: ['A1', 'A2'], missing: ['A1'] },
   ]);
   assert.equal(server.listTrips('01/01/2000').trips.length, 0);
   assert.throws(() => server.listTrips('2026-11-13'), /Ngày không hợp lệ/);
+  assert.equal(rows[0].length, 4); // reading never rewrites the sheet
   const empty = tripServer().server.listTrips();
-  assert.equal(empty.day, empty.day.match(/^\d{2}\/\d{2}\/\d{4}$/)[0]); // default = today
+  assert.match(empty.day, /^\d{2}\/\d{2}\/\d{4}$/); // default = today
   assert.equal(empty.trips.length, 0);
+  assert.deepEqual(plain(server.openTrips().trips.map((t) => t.ma_chuyen)), ['CD261112-01', 'CD261113-02']);
 });
 
-test('trip endpoints: POST {action:trip} saves, GET ?action=trips lists, errors as {error}', () => {
+test('trip endpoints: POST trip/endTrip, GET trips/opentrips, errors as {error}', () => {
   const { server } = tripServer();
-  const post = (body) => JSON.parse(server.doPost({ postData: { contents: body } }).text);
-  const saved = post(JSON.stringify({ action: 'trip', plate: '29C12345', codes: ['GYEGFF9C'] }));
+  const post = (body) => JSON.parse(server.doPost({ postData: { contents: JSON.stringify(body) } }).text);
+  const saved = post({ action: 'trip', plate: '29C12345', codes: ['GYEGFF9C'] });
   assert.equal(saved.ok, true);
-  assert.match(post(JSON.stringify({ action: 'write', cell: 'C3', code: 'X1' })).error, /Thao tác không hợp lệ/);
-  assert.match(post(JSON.stringify({ action: 'trip', plate: '', codes: ['X1'] })).error, /Biển kiểm soát/);
-  assert.ok(post('not json').error);
   const get = (parameter) => JSON.parse(server.doGet({ parameter }).text);
-  assert.deepEqual([...get({ action: 'trips' }).trips[0].codes], ['GYEGFF9C']);
+  assert.deepEqual(get({ action: 'opentrips' }).trips[0].codes, ['GYEGFF9C']);
+  assert.equal(post({ action: 'endTrip', ma_chuyen: saved.ma_chuyen, failed: [], checked: [] }).ok, true);
+  assert.equal(get({ action: 'opentrips' }).trips.length, 0);
+  assert.deepEqual(get({ action: 'trips' }).trips[0].codes, ['GYEGFF9C']);
+  assert.match(post({ action: 'write', cell: 'C3', code: 'X1' }).error, /Thao tác không hợp lệ/);
+  assert.match(post({ action: 'trip', plate: '', codes: ['X1'] }).error, /Biển kiểm soát/);
+  assert.ok(JSON.parse(server.doPost({ postData: { contents: 'not json' } }).text).error);
   assert.match(get({ action: 'trips', day: 'x' }).error, /Ngày không hợp lệ/);
 });
 
@@ -749,4 +794,73 @@ test('client plate rule matches the server: normalizePlate', () => {
   assert.equal(Lookup.normalizePlate(' 29c-123.45 '), '29C-123.45');
   assert.equal(Lookup.normalizePlate('30a   12345'), '30A 12345');
   for (const bad of ['', 'AB', '=1+1', '29C-123.45-67890']) assert.equal(Lookup.normalizePlate(bad), '');
+});
+
+test('bắn kiểm: FAILED orders of the trip from current statuses; "Có", repeats, other orders', () => {
+  const data = [...DATA.slice(0, -1), ['2026-11-10', 'FFFF7777', 'ghn', ' failed ', 'Quận Hoàng Mai', '']];
+  const Lookup = loadLookup();
+  const index = Lookup.buildIndex(loadServer({ raw_data: data, config: CONFIG }).getLookupData());
+  const tripCodes = ['GYEGFF9C', 'BBBB2222', 'FFFF7777', 'GONE0000']; // GONE0000 left raw_data
+  const failedList = [...Lookup.tripFailedCodes(tripCodes, index)];
+  assert.deepEqual(failedList, ['BBBB2222', 'FFFF7777']);
+  const failed = { BBBB2222: true, FFFF7777: true };
+  const inTrip = Object.fromEntries(tripCodes.map((c) => [c, true]));
+  const ok = Lookup.resolveTripCheck(' bbbb2222 ', index, failed, {}, inTrip);
+  assert.deepEqual([ok.status, ok.code, ok.speech], ['ok', 'BBBB2222', 'Có']);
+  assert.equal(Lookup.resolveTripCheck('BBBB2222', index, failed, { BBBB2222: true }, inTrip).speech, 'Đã quét');
+  const notFailed = Lookup.resolveTripCheck('GYEGFF9C', index, failed, {}, inTrip);
+  assert.deepEqual([notFailed.status, notFailed.orderStatus, notFailed.speech], ['not_failed', 'TRANSPORTING', 'Không cần kiểm']);
+  assert.equal(Lookup.resolveTripCheck('gone0000', index, failed, {}, inTrip).status, 'not_failed');
+  assert.equal(Lookup.resolveTripCheck('AAAA1111', index, failed, {}, inTrip).speech, 'Không thuộc chuyến');
+  assert.equal(Lookup.resolveTripCheck('  ', index, failed, {}, inTrip).status, 'empty');
+});
+
+test('đồng kiểm scan: 8 letters/digits is "Có", anything else "Không", repeats "Đã quét"', () => {
+  const Lookup = loadLookup();
+  const ok = Lookup.resolveDongKiemScan(' gye7wb4c ', {});
+  assert.deepEqual([ok.status, ok.code, ok.speech], ['ok', 'GYE7WB4C', 'Có']);
+  assert.equal(Lookup.resolveDongKiemScan('GYEFAPQW', {}).speech, 'Có'); // letters only is a real code too
+  for (const bad of ['GYE7WB4', 'GYE7WB4CX', 'GYE7 WB4C', 'GYE7-B4C', 'https://x.vn/GYE7WB4C']) {
+    assert.deepEqual([Lookup.resolveDongKiemScan(bad, {}).status, Lookup.resolveDongKiemScan(bad, {}).speech], ['invalid', 'Không'], bad);
+  }
+  assert.equal(Lookup.resolveDongKiemScan('GYE7WB4C', { GYE7WB4C: true }).speech, 'Đã quét');
+  assert.equal(Lookup.resolveDongKiemScan('', {}).status, 'empty');
+});
+
+test('saveDongKiem appends one text row per order; columns found by header, missing ones added', () => {
+  const tables = { raw_data: DATA, config: CONFIG };
+  const server = loadServer(tables);
+  const r = server.saveDongKiem('18/11/2026', 'Yên Phong', ['gye7wb4c', 'GYEFAPQW', 'GYE7WB4C']);
+  assert.equal(r.ok, true);
+  assert.equal(r.count, 2);
+  assert.deepEqual(plain(tables.data_dong_kiem), [
+    ['ngay_nhan', 'kho_nhan', 'tracking_number', 'thoi_gian'],
+    ['18/11/2026', 'Yên Phong', 'GYE7WB4C', r.thoi_gian],
+    ['18/11/2026', 'Yên Phong', 'GYEFAPQW', r.thoi_gian],
+  ]);
+
+  // A sheet made by hand: other column order, an extra column, thoi_gian missing.
+  const own = [['tracking_number', 'ghi_chu', 'kho_nhan', 'ngay_nhan'], ['OLD00001', 'x', 'Thuận Thành', '17/11/2026']];
+  const s2 = loadServer({ raw_data: DATA, config: CONFIG, data_dong_kiem: own });
+  const r2 = s2.saveDongKiem('18/11/2026', 'Thuận Thành', ['GYE7WB4C']);
+  assert.deepEqual(plain(own), [
+    ['tracking_number', 'ghi_chu', 'kho_nhan', 'ngay_nhan', 'thoi_gian'],
+    ['OLD00001', 'x', 'Thuận Thành', '17/11/2026'],
+    ['GYE7WB4C', '', 'Thuận Thành', '18/11/2026', r2.thoi_gian],
+  ]);
+});
+
+test('saveDongKiem rejects bad day, warehouse or codes; endpoint answers {error}', () => {
+  const tables = { raw_data: DATA, config: CONFIG };
+  const server = loadServer(tables);
+  assert.throws(() => server.saveDongKiem('2026-11-18', 'Yên Phong', ['GYE7WB4C']), /Ngày nhận không hợp lệ/);
+  assert.throws(() => server.saveDongKiem('18/11/2026', 'Hà Nội', ['GYE7WB4C']), /Kho nhận không hợp lệ/);
+  assert.throws(() => server.saveDongKiem('18/11/2026', 'Yên Phong', []), /Chưa quét đơn nào/);
+  for (const bad of ['GYE7WB4', '=1+1+1+1', 'GYE7 WB4C']) {
+    assert.throws(() => server.saveDongKiem('18/11/2026', 'Yên Phong', ['GYE7WB4C', bad]), /Mã không hợp lệ/);
+  }
+  assert.equal(tables.data_dong_kiem, undefined);
+  const post = (body) => JSON.parse(server.doPost({ postData: { contents: JSON.stringify(body) } }).text);
+  assert.equal(post({ action: 'dongkiem', ngay: '18/11/2026', kho: 'Thuận Thành', codes: ['GYE7WB4C'] }).count, 1);
+  assert.match(post({ action: 'dongkiem', ngay: '18/11/2026', kho: '', codes: ['GYE7WB4C'] }).error, /Kho nhận/);
 });

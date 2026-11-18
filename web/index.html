@@ -36,6 +36,7 @@
       <button type="button" class="btn mode-btn" data-mode="sort" aria-pressed="true">Chia chọn</button>
       <button type="button" class="btn mode-btn" data-mode="routesort" aria-pressed="false">Chia tuyến</button>
       <button type="button" class="btn mode-btn" data-mode="trip" aria-pressed="false">Chuyến đi</button>
+      <button type="button" class="btn mode-btn" data-mode="dongkiem" aria-pressed="false">Đồng kiểm</button>
       <button type="button" class="btn mode-btn" data-mode="backlog" aria-pressed="false">Backlog</button>
       <button type="button" class="btn mode-btn" data-mode="route" aria-pressed="false">Tuyến</button>
     </div>
@@ -71,6 +72,41 @@
       <div class="route-actions">
         <button id="trip-finish" class="btn btn-primary" type="button" disabled>Kết thúc chuyến</button>
         <button id="trip-cancel" class="btn" type="button">Huỷ chuyến</button>
+      </div>
+    </div>
+
+    <!-- Chuyến đi mode, ending a trip: scan back its FAILED orders (progress kept on this device). -->
+    <div id="check-progress" class="route-progress" hidden>
+      <div class="route-progress-info">
+        <div id="check-label" class="muted"></div>
+        <div id="check-count" class="route-count">0/0</div>
+      </div>
+      <div class="route-actions">
+        <button id="check-finish" class="btn btn-primary" type="button">Kết thúc chuyến</button>
+        <button id="check-back" class="btn" type="button">Quay lại</button>
+      </div>
+    </div>
+
+    <!-- Đồng kiểm mode: receiving day + warehouse, then scan; the round is saved once to sheet data_dong_kiem. -->
+    <form id="dk-setup" class="trip-plate-form" autocomplete="off" hidden>
+      <label for="dk-day">Ngày nhận đơn</label>
+      <input id="dk-day" class="day-input" type="date" />
+      <fieldset class="dk-kho">
+        <legend>Kho nhận</legend>
+        <label class="btn"><input type="radio" name="dk-kho" value="Thuận Thành" /> Thuận Thành</label>
+        <label class="btn"><input type="radio" name="dk-kho" value="Yên Phong" /> Yên Phong</label>
+      </fieldset>
+      <div id="dk-hint" class="muted" aria-live="polite"></div>
+      <button class="btn btn-primary btn-lg" type="submit">Bắt đầu quét</button>
+    </form>
+    <div id="dk-progress" class="route-progress" hidden>
+      <div class="route-progress-info">
+        <div id="dk-label" class="muted"></div>
+        <div id="dk-count" class="route-count">0 đơn</div>
+      </div>
+      <div class="route-actions">
+        <button id="dk-finish" class="btn btn-primary" type="button" disabled>Kết thúc</button>
+        <button id="dk-cancel" class="btn" type="button">Huỷ</button>
       </div>
     </div>
 

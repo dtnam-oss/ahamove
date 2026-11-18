@@ -5,7 +5,7 @@ Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong
 **Mở công cụ:** https://dtnam-oss.github.io/ahamove/
 
 - Giao diện: trang tĩnh trên GitHub Pages (`web/`).
-- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `GET ?action=trips` / `POST {action:'trip'}` đọc/lưu chuyến đi ở sheet `chuyen_di`.
+- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `POST {action:'dongkiem'}` ghi sheet `data_dong_kiem`.
 
 Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
@@ -45,17 +45,38 @@ Thay cho chế độ Ghi sheet cũ (sheet `data_don` giữ nguyên, không còn 
 | Đơn có trong `raw_data`, trạng thái khác `NEED_RETURN_TO_PARTNER_EOD` | "Có" | có |
 | Trạng thái `NEED_RETURN_TO_PARTNER_EOD` | "Không, đơn trả đối tác" | không |
 | Đã quét trong chuyến này | "Đã quét" | không |
-| Đã nằm trong chuyến khác hôm nay (mọi máy) | "Đã ở chuyến xe `<BKS>`" | không |
+| Đang nằm trong một chuyến **chưa kết thúc** (mọi ngày, mọi máy) | "Đã ở chuyến xe `<BKS>`" | không |
 | Mã không có trong `raw_data` | "Không tìm thấy đơn" | không |
 
-- Mỗi lần quét được kiểm tra ngay trên máy (dữ liệu đã tải + danh sách chuyến hôm nay), không chờ mạng. Danh sách trạng thái bị từ chối: `TRIP_REFUSED_STATUSES` trong `web/lookup.js`.
+- Mỗi lần quét được kiểm tra ngay trên máy (dữ liệu đã tải + danh sách chuyến chưa kết thúc), không chờ mạng. Danh sách trạng thái bị từ chối: `TRIP_REFUSED_STATUSES` trong `web/lookup.js`.
 - Chuyến đang quét được lưu trên máy (tải lại trang không mất). Chỉ khi bấm **Kết thúc** mới gửi cả chuyến lên một lần; lỗi mạng thì chuyến vẫn giữ, bấm Kết thúc lại.
-- Khi lưu, server kiểm tra lại: đơn đã được máy khác đưa vào chuyến hôm nay thì cả chuyến chưa được lưu, các đơn đó bị bỏ khỏi chuyến và màn hình báo "Đã bỏ N đơn" → bấm Kết thúc lại.
-- Sheet `chuyen_di` (tự tạo ở lần lưu đầu): mỗi đơn một dòng `ma_chuyen | bks | thoi_gian | tracking_number`, dạng text. Mã chuyến `CD<yyMMdd>-<số thứ tự trong ngày>`, vd `CD261113-01`; giờ Việt Nam.
+- Khi lưu, server kiểm tra lại: đơn đã được máy khác đưa vào một chuyến chưa kết thúc thì cả chuyến chưa được lưu, các đơn đó bị bỏ khỏi chuyến và màn hình báo "Đã bỏ N đơn" → bấm Kết thúc lại.
+- Sheet `chuyen_di` (tự tạo ở lần lưu đầu): mỗi đơn một dòng `ma_chuyen | bks | thoi_gian | tracking_number | ket_thuc | ban_kiem`, dạng text (sheet cũ 4 cột được tự thêm 2 tiêu đề mới, dữ liệu cũ giữ nguyên). Mã chuyến `CD<yyMMdd>-<số thứ tự trong ngày>`, vd `CD261113-01`; giờ Việt Nam.
 
 **Danh sách chuyến:** ở màn hình Chuyến đi, chọn ngày (mặc định hôm nay) → các chuyến mới nhất trước, của mọi máy. Bấm **Xem đơn** để hiện danh sách mã (mỗi đơn một dòng) và **Copy** để dán sang ứng dụng khác. Điện thoại hiện dạng thẻ, màn hình rộng (≥ 640px) hiện dạng bảng.
 
+**Kết thúc chuyến (bắn kiểm):** trên mỗi chuyến **Đang chạy**, bấm **Kết thúc** → trang tải lại trạng thái mới nhất trong `raw_data` → hiện số đơn `FAILED` của chuyến (`0/N`) → quét lại từng đơn FAILED về kho:
+
+| Khi quét | Giọng đọc |
+|---|---|
+| Đơn FAILED của chuyến, chưa quét | "Có" (đủ hết: "Có, đủ đơn"), bộ đếm tăng |
+| Đơn FAILED đã quét | "Đã quét" |
+| Đơn của chuyến nhưng không FAILED | "Không cần kiểm" |
+| Đơn không thuộc chuyến | "Không thuộc chuyến" |
+
+- Bấm **Kết thúc chuyến** → xác nhận (còn thiếu thì hỏi "Còn thiếu N đơn FAILED chưa quét. Vẫn kết thúc?") → mọi dòng của chuyến được ghi `ket_thuc` (giờ kết thúc); đơn FAILED ghi `ban_kiem` = `Đã kiểm` hoặc `Thiếu`. Danh sách hiện "Đã kết thúc 21:00 · thiếu 1", **Xem đơn** liệt kê đơn thiếu.
+- **Quay lại** giữ tiến độ trên máy; dòng chuyến hiện **Tiếp tục kiểm 1/2**.
+- Chuyến đã kết thúc không còn giữ đơn: các đơn đó (vd đơn FAILED giao lại) được gán vào chuyến tiếp theo. Chuyến chưa kết thúc thì giữ đơn bất kể ngày tạo — nhớ kết thúc các chuyến cũ.
+- Danh sách trạng thái cần bắn kiểm: `TRIP_CHECK_STATUSES` trong `web/lookup.js`.
+
 Ai có URL API đều xem và tạo được chuyến (giống các chế độ khác: chỉ có mã vận đơn và BKS, không có thông tin khách).
+
+## Chế độ Đồng kiểm
+
+Bấm **Đồng kiểm** → chọn **Ngày nhận đơn** (mặc định hôm nay) và **Kho nhận** (Thuận Thành / Yên Phong) → **Bắt đầu quét** → quét đơn → **Kết thúc**.
+
+- Đơn hợp lệ: đúng **8 ký tự chữ/số liền nhau** (vd `GYE7WB4C`; mã toàn chữ như `GYEFAPQW` cũng hợp lệ). Khoảng trắng đầu/cuối được bỏ, chữ thường đổi thành hoa. Hợp lệ → "Có"; sai định dạng → "Không"; quét lại trong lượt → "Đã quét". Không tra `raw_data`.
+- Lượt đang quét được lưu trên máy. **Kết thúc** gửi cả lượt lên một lần, ghi sheet `data_dong_kiem` (tự tạo): mỗi đơn một dòng `ngay_nhan | kho_nhan | tracking_number | thoi_gian`, dạng text. Cột được tìm theo tên tiêu đề — sheet tự tạo trước với thứ tự cột khác vẫn ghi đúng, cột thiếu được thêm vào cuối.
 
 ## Chế độ Backlog
 
@@ -132,11 +153,12 @@ web/                  giao diện (GitHub Pages, deploy tự động khi push ma
 gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
   Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
-                      doPost {action:'trip'}: lưu chuyến đi (trips.js)
+                      doPost {action:'trip'|'endTrip'|'dongkiem'}: lưu / kết thúc chuyến, ghi đồng kiểm
   routes.js           taoCauHinhTuyen / boSungTuyen: gom phường/xã thành tuyến (config_tuyen)
   goong.js            gọi Goong geocode (kiểm tra đúng quận/huyện)
   locate.js           ?action=locate&code=: toạ độ một đơn cho bản đồ (cache toa_do_don)
-  trips.js            createTrip / listTrips: chuyến đi ở sheet chuyen_di (?action=trips&day=dd/MM/yyyy)
+  trips.js            createTrip / endTrip / listTrips / openTrips: chuyến đi ở sheet chuyen_di
+  dong-kiem.js        saveDongKiem: đơn nhận theo ngày + kho ở sheet data_dong_kiem
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages

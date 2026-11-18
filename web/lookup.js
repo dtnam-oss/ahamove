@@ -237,6 +237,43 @@ var Lookup = (function () {
     return { status: 'ok', code: code, speech: 'Có' };
   }
 
+  /** Statuses (raw_data) of orders that came back and must be scanned when a trip ends ("bắn kiểm"). */
+  var TRIP_CHECK_STATUSES = ['FAILED'];
+
+  /** The trip's orders whose current status (index = freshly loaded raw_data) needs a check-back scan. */
+  function tripFailedCodes(codes, index) {
+    return codes.filter(function (c) {
+      var order = index.orders.get(c);
+      return Boolean(order) && TRIP_CHECK_STATUSES.indexOf(normalizeCode(order.status)) >= 0;
+    });
+  }
+
+  /**
+   * "Bắn kiểm" when a trip ends: is this scan one of the trip's FAILED orders?
+   * failed / checked / inTrip: {code: true}. status: 'empty' | 'ok' | 'duplicate' | 'not_failed' | 'other'.
+   */
+  function resolveTripCheck(raw, index, failed, checked, inTrip) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    var code = findCode(raw, index.orders) || normalizeCode(raw);
+    if (failed[code]) {
+      return checked[code] ? { status: 'duplicate', code: code, speech: 'Đã quét' } : { status: 'ok', code: code, speech: 'Có' };
+    }
+    if (inTrip[code]) {
+      var orderStatus = String((index.orders.get(code) || {}).status || '').trim();
+      return { status: 'not_failed', code: code, orderStatus: orderStatus, speech: 'Không cần kiểm' };
+    }
+    return { status: 'other', code: code, speech: 'Không thuộc chuyến' };
+  }
+
+  /** "Đồng kiểm": a valid waybill code is 8 letters/digits, e.g. GYE7WB4C (spaces around it are dropped). */
+  function resolveDongKiemScan(raw, scanned) {
+    var code = normalizeCode(raw);
+    if (!code) return { status: 'empty', speech: '' };
+    if (!/^[A-Z0-9]{8}$/.test(code)) return { status: 'invalid', input: code, speech: 'Không' };
+    if (scanned[code]) return { status: 'duplicate', code: code, speech: 'Đã quét' };
+    return { status: 'ok', code: code, speech: 'Có' };
+  }
+
   /** Ward points of a route (for the map); [] when unknown. */
   function routeWardPoints(routeName, index) {
     return (index.routePoints && index.routePoints.get(routeName)) || [];
@@ -257,5 +294,8 @@ var Lookup = (function () {
     routeWardPoints: routeWardPoints,
     normalizePlate: normalizePlate,
     resolveTripScan: resolveTripScan,
+    tripFailedCodes: tripFailedCodes,
+    resolveTripCheck: resolveTripCheck,
+    resolveDongKiemScan: resolveDongKiemScan,
   };
 })();

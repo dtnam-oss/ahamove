@@ -1,7 +1,8 @@
 // Backend of the order-sorting tool (Google Apps Script web app).
 // GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config.
 // GET ?action=locate&code=X returns the map point of one order (see locate.js).
-// GET ?action=trips&day=dd/MM/yyyy lists the trips of a day; POST {action:'trip', plate, codes} saves one (see trips.js).
+// GET ?action=trips&day=dd/MM/yyyy / ?action=opentrips and POST {action:'trip'|'endTrip'} manage trips (see trips.js).
+// POST {action:'dongkiem', ngay, kho, codes} saves a round of received orders (see dong-kiem.js).
 // Customer PII (name, phone, address) never leaves the sheet.
 //
 // The UI is hosted outside Apps Script (GitHub Pages, see web/) because the Apps Script
@@ -19,6 +20,7 @@ function doGet(e) {
   if (action === 'data') return jsonOutput_(safeLookupData_());
   if (action === 'locate') return jsonOutput_(safely_(function () { return locateOrder(e.parameter.code); }));
   if (action === 'trips') return jsonOutput_(safely_(function () { return listTrips(e.parameter.day); }));
+  if (action === 'opentrips') return jsonOutput_(safely_(openTrips));
 
   // Old links to this web app: point users to the hosted UI (top navigation needs a user click).
   return HtmlService.createHtmlOutput(
@@ -133,8 +135,10 @@ function readBacklog_(ss) {
 function doPost(e) {
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
-    if (body.action !== 'trip') throw new Error('Thao tác không hợp lệ');
-    return jsonOutput_(createTrip(body.plate, body.codes));
+    if (body.action === 'trip') return jsonOutput_(createTrip(body.plate, body.codes));
+    if (body.action === 'endTrip') return jsonOutput_(endTrip(body.ma_chuyen, body.failed, body.checked));
+    if (body.action === 'dongkiem') return jsonOutput_(saveDongKiem(body.ngay, body.kho, body.codes));
+    throw new Error('Thao tác không hợp lệ');
   } catch (err) {
     return jsonOutput_({ error: String((err && err.message) || err) });
   }

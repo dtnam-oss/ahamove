@@ -59,7 +59,8 @@ html, body {
   font-size: 0.9rem;
 }
 
-.mode-bar { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.mode-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; } /* phones: 2 rows of 3 */
+@media (min-width: 560px) { .mode-bar { grid-template-columns: repeat(6, 1fr); } }
 .mode-btn { padding-left: 4px; padding-right: 4px; font-size: 0.85rem; }
 .mode-btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
 
@@ -149,12 +150,22 @@ html, body {
 .trip-list { display: grid; gap: 8px; }
 .trip-item { background: var(--panel); border: 1px solid #334155; border-radius: 12px; }
 .trip-item.is-open { border-color: var(--primary); }
-/* Phone: each trip is a card - id and plate, then time and order count, the button on the right. */
+/* Phone: each trip is a card - id and plate, time and order count, state; the buttons on the right. */
 .trip-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 4px 10px; align-items: center; padding: 10px 12px; }
-.trip-row .trip-toggle { grid-column: 3; grid-row: 1 / span 2; }
+.trip-row .trip-actions { grid-column: 3; grid-row: 1 / span 3; display: grid; gap: 6px; }
+.trip-row .trip-state { grid-column: 1 / span 2; }
+.trip-state { font-size: 0.9rem; color: var(--warn); }
+.trip-state.is-ended { color: var(--ok); }
+.trip-state.has-missing { color: var(--warn); }
+.trip-missing { color: var(--warn); font-size: 0.9rem; }
 .trip-plate { font-weight: 700; }
 .trip-head { display: none; }
 .trip-detail { padding: 0 12px 12px; display: grid; gap: 8px; }
+.dk-kho { border: 0; padding: 0; margin: 4px 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dk-kho legend { padding: 0; margin-bottom: 6px; }
+.dk-kho label { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 1.1rem; }
+.dk-kho label:has(input:checked) { background: var(--primary); border-color: var(--primary); font-weight: 700; }
+.dk-kho input { width: 20px; height: 20px; accent-color: #fff; }
 .trip-codes {
   width: 100%;
   font-family: ui-monospace, monospace;
@@ -168,8 +179,9 @@ html, body {
 }
 /* Tablet/desktop: the same rows line up as a table under a header row. */
 @media (min-width: 640px) {
-  .trip-row { grid-template-columns: 1.3fr 1.2fr 0.7fr 0.8fr 7em; } /* fixed button column keeps the header aligned */
-  .trip-row .trip-toggle { grid-column: auto; grid-row: auto; }
+  .trip-row { grid-template-columns: 1.2fr 1.1fr 0.6fr 0.7fr 1.4fr 9em; } /* fixed button column keeps the header aligned */
+  .trip-row .trip-actions { grid-column: auto; grid-row: auto; }
+  .trip-row .trip-state { grid-column: auto; }
   .trip-head { display: grid; color: var(--muted); font-size: 0.85rem; padding-top: 0; padding-bottom: 0; border: 1px solid transparent; }
 }
 

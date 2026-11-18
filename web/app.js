@@ -1,6 +1,7 @@
 // Browser controller: data loading, barcode-gun input, camera scanning, spoken results,
 // "Chuyến đi" mode (enter a truck plate, check each order loaded on the device, save the trip to sheet
-// chuyen_di once it is finished, and list/copy the trips of a day)
+// chuyen_di once it is finished, list/copy the trips of a day, end a trip after scanning back its FAILED orders)
+// "Đồng kiểm" mode (receiving day + warehouse, scan the received orders, save them to sheet data_dong_kiem)
 // "Backlog" mode (speak the days left to the deadline from sheet back_log)
 // "Chia tuyến" mode (speak the order's route from sheet config_tuyen, like "Chia chọn" does for areas)
 // and "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck).
@@ -38,6 +39,19 @@
     tripCount: $('trip-count'),
     tripFinish: $('trip-finish'),
     tripCancel: $('trip-cancel'),
+    checkProgress: $('check-progress'),
+    checkLabel: $('check-label'),
+    checkCount: $('check-count'),
+    checkFinish: $('check-finish'),
+    checkBack: $('check-back'),
+    dkSetup: $('dk-setup'),
+    dkDay: $('dk-day'),
+    dkHint: $('dk-hint'),
+    dkProgress: $('dk-progress'),
+    dkLabel: $('dk-label'),
+    dkCount: $('dk-count'),
+    dkFinish: $('dk-finish'),
+    dkCancel: $('dk-cancel'),
     routePicker: $('route-picker'),
     routeList: $('route-list'),
     routeStart: $('route-start'),
@@ -56,7 +70,8 @@
   var lastCamera = { text: '', at: 0 };
   var CAMERA_REPEAT_MS = 2500; // ignore the same code re-read by the live camera within this window
 
-  // 'sort' = sorting location | 'routesort' = route | 'trip' = load a trip | 'backlog' = days left | 'route' = route check
+  // 'sort' = sorting location | 'routesort' = route | 'trip' = load/end a trip | 'dongkiem' = received orders
+  // | 'backlog' = days left | 'route' = route check
   var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
@@ -119,12 +134,15 @@
   }
 
   // ---------- Data ----------
+  /** Load raw_data and the configs; done(ok) runs afterwards. */
   function loadData(done) {
+    var ok = false;
     els.status.textContent = 'Đang tải dữ liệu…';
     els.reloadBtn.disabled = true;
     apiGet('?action=data&t=' + Date.now())
       .then(function (body) {
         index = Lookup.buildIndex(body);
+        ok = true;
         var time = new Date(body.updatedAt).toLocaleTimeString('vi-VN');
         var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
         var routeInfo = body.routes ? countRoutes(body.routes) + ' tuyến' : 'tuyến lỗi: ' + body.routesError;
@@ -140,7 +158,7 @@
       })
       .then(function () {
         els.reloadBtn.disabled = false;
-        if (done) done();
+        if (done) done(ok);
       });
   }
 
@@ -153,8 +171,9 @@
   }
 
   function handleScan(raw) {
+    if (mode === 'dongkiem') { handleDkScan(raw); return; } // checks the code format only, no data needed
     if (!index) { speak('Chưa tải dữ liệu'); return; }
-    if (mode === 'trip') { handleTripScan(raw); return; }
+    if (mode === 'trip') { if (check && !els.checkProgress.hidden) handleCheckScan(raw); else handleTripScan(raw); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
     if (mode === 'route') { handleRouteScan(raw); return; }
     if (mode === 'routesort') { handleRouteSort(raw); return; }
@@ -175,8 +194,10 @@
     });
     leaveRouteScreens();
     leaveTripScreens();
+    leaveDkScreens();
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
     if (mode === 'trip') { showTripScreen(); return; }
+    if (mode === 'dongkiem') { showDkScreen(); return; }
     var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     focusInput();
@@ -418,7 +439,7 @@
   var TRIP_DRAFT_KEY = 'tripDraft.v1';
   var tripDraft = null; // {plate, codes: [...]} of the trip being loaded, or null
   var tripIn = {}; // code -> true for tripDraft.codes (constant-time repeat check)
-  var takenToday = new Map(); // code -> {ma_chuyen, bks} of trips saved today, on any device
+  var takenToday = new Map(); // code -> {ma_chuyen, bks} of trips not ended yet (any day, any device)
   var tripSaving = false;
   var tripListSeq = 0; // only the latest list request may render
 
@@ -466,21 +487,26 @@
   }
 
   function refreshTaken() {
-    return fetchTrips('').then(function (body) { setTaken(body.trips); }, function () { /* the server re-checks on save */ });
+    return apiGet('?action=opentrips&t=' + Date.now())
+      .then(function (body) { setTaken(body.trips); }, function () { /* the server re-checks on save */ });
   }
 
   function leaveTripScreens() {
     els.tripHome.hidden = true;
     els.tripProgress.hidden = true;
+    els.checkProgress.hidden = true;
   }
 
   function showTripScreen() {
-    if (tripDraft) enterTripScan(); else showTripHome();
+    if (tripDraft) enterTripScan();
+    else if (check && check.active) enterCheck();
+    else showTripHome();
   }
 
   function showTripHome(message) {
     els.tripHome.hidden = false;
     els.tripProgress.hidden = true;
+    els.checkProgress.hidden = true;
     els.form.hidden = true;
     els.result.hidden = true;
     els.tripPlateForm.hidden = true;
@@ -495,7 +521,6 @@
     els.tripNote.textContent = message || 'Đang tải danh sách chuyến…';
     fetchTrips(isToday ? '' : inputToDay(els.tripDay.value))
       .then(function (body) {
-        if (isToday) setTaken(body.trips);
         if (seq !== tripListSeq) return;
         renderTrips(body.trips);
         var orders = body.trips.reduce(function (n, t) { return n + t.codes.length; }, 0);
@@ -506,12 +531,20 @@
       });
   }
 
+  /** "Đã kết thúc 17:20" (with the day when the trip ended on a later day) and the missing FAILED orders. */
+  function tripState(trip) {
+    if (!trip.ket_thuc) return 'Đang chạy';
+    var sameDay = trip.ket_thuc.slice(0, 10) === trip.thoi_gian.slice(0, 10);
+    var when = sameDay ? trip.ket_thuc.slice(11, 16) : trip.ket_thuc.slice(0, 5) + ' ' + trip.ket_thuc.slice(11, 16);
+    return 'Đã kết thúc ' + when + (trip.missing.length ? ' · thiếu ' + trip.missing.length : '');
+  }
+
   /** One row per trip: a card on phones, a table row on wider screens (CSS); "Xem đơn" opens the codes. */
   function renderTrips(trips) {
     els.tripList.textContent = '';
     if (!trips.length) { els.tripList.appendChild(el('div', 'muted', 'Chưa có chuyến nào trong ngày này.')); return; }
     var head = el('div', 'trip-row trip-head');
-    ['Mã chuyến', 'BKS', 'Giờ tạo', 'Số đơn', ''].forEach(function (t) { head.appendChild(el('span', '', t)); });
+    ['Mã chuyến', 'BKS', 'Giờ tạo', 'Số đơn', 'Trạng thái', ''].forEach(function (t) { head.appendChild(el('span', '', t)); });
     els.tripList.appendChild(head);
     trips.forEach(function (trip) {
       var item = el('div', 'trip-item');
@@ -520,13 +553,26 @@
       row.appendChild(el('span', 'trip-plate', trip.bks));
       row.appendChild(el('span', 'trip-time muted', trip.thoi_gian.slice(11, 16)));
       row.appendChild(el('span', 'trip-total', trip.codes.length + ' đơn'));
+      var state = el('span', 'trip-state' + (trip.ket_thuc ? ' is-ended' : ''), tripState(trip));
+      if (trip.missing.length) state.classList.add('has-missing');
+      row.appendChild(state);
+      var actions = el('div', 'trip-actions');
       var toggle = el('button', 'btn trip-toggle', 'Xem đơn');
       toggle.type = 'button';
-      row.appendChild(toggle);
+      actions.appendChild(toggle);
+      if (!trip.ket_thuc) {
+        var mine = check && check.ma_chuyen === trip.ma_chuyen;
+        var end = el('button', 'btn btn-primary trip-end', mine ? 'Tiếp tục kiểm ' + checkProgressText() : 'Kết thúc');
+        end.type = 'button';
+        end.addEventListener('click', function () { startCheck(trip); });
+        actions.appendChild(end);
+      }
+      row.appendChild(actions);
       item.appendChild(row);
 
       var detail = el('div', 'trip-detail');
       detail.hidden = true;
+      if (trip.missing.length) detail.appendChild(el('div', 'trip-missing', 'Thiếu khi bắn kiểm: ' + trip.missing.join(', ')));
       var codes = el('textarea', 'trip-codes');
       codes.readOnly = true;
       codes.value = trip.codes.join('\n'); // one order per line, ready to paste elsewhere
@@ -670,7 +716,265 @@
     showTripHome();
   });
 
+  // ---------- Ending a trip: scan back its FAILED orders ("bắn kiểm"), then mark it ended ----------
+  // FAILED orders are taken from raw_data reloaded when the check starts; progress stays on this device.
+  var CHECK_KEY = 'tripCheck.v1';
+  var check = null; // {ma_chuyen, bks, codes, failed: [...], checked: {code: true}, active} or null
+  var checkSets = { failed: {}, inTrip: {} };
+  var checkSaving = false;
+
+  function toSet(list) {
+    var set = {};
+    list.forEach(function (c) { set[c] = true; });
+    return set;
+  }
+
+  function setCheck(next) {
+    check = next;
+    checkSets = next ? { failed: toSet(next.failed), inTrip: toSet(next.codes) } : { failed: {}, inTrip: {} };
+    try {
+      if (next) localStorage.setItem(CHECK_KEY, JSON.stringify(next));
+      else localStorage.removeItem(CHECK_KEY);
+    } catch (e) { /* storage blocked: the check still works until the page is closed */ }
+  }
+
+  function restoreCheck() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(CHECK_KEY) || 'null');
+      if (saved && saved.ma_chuyen && Array.isArray(saved.failed) && Array.isArray(saved.codes) && saved.checked) setCheck(saved);
+    } catch (e) { /* corrupt or blocked: no check in progress */ }
+  }
+
+  function checkCounts() {
+    var done = check.failed.filter(function (c) { return check.checked[c]; }).length;
+    return { done: done, total: check.failed.length };
+  }
+
+  function checkProgressText() {
+    var c = checkCounts();
+    return c.done + '/' + c.total;
+  }
+
+  function startCheck(trip) {
+    if (check && check.ma_chuyen === trip.ma_chuyen) {
+      check.active = true;
+      setCheck(check);
+      enterCheck();
+      return;
+    }
+    if (check && checkCounts().done && !window.confirm('Đang bắn kiểm dở chuyến ' + check.ma_chuyen + ' (' + checkProgressText() + '). Bỏ để kiểm chuyến ' + trip.ma_chuyen + '?')) return;
+    els.tripNote.textContent = 'Đang lấy trạng thái mới nhất của đơn trong raw_data…';
+    loadData(function (ok) {
+      if (!ok) { els.tripNote.textContent = 'Không lấy được trạng thái đơn — thử lại'; return; }
+      setCheck({
+        ma_chuyen: trip.ma_chuyen,
+        bks: trip.bks,
+        codes: trip.codes.slice(),
+        failed: Lookup.tripFailedCodes(trip.codes, index),
+        checked: {},
+        active: true,
+      });
+      enterCheck();
+    });
+  }
+
+  function enterCheck() {
+    els.tripHome.hidden = true;
+    els.tripProgress.hidden = true;
+    els.checkProgress.hidden = false;
+    els.form.hidden = false;
+    els.result.hidden = false;
+    els.checkLabel.textContent = 'Bắn kiểm ' + check.ma_chuyen + ' · xe ' + check.bks;
+    updateCheckCount();
+    showResult('idle', check.failed.length ? 'Quét đơn FAILED' : 'Không có đơn FAILED',
+      check.failed.length + ' đơn FAILED / ' + check.codes.length + ' đơn của chuyến' + (check.failed.length ? '' : ' — bấm Kết thúc chuyến'));
+    focusInput();
+  }
+
+  function updateCheckCount() {
+    var c = checkCounts();
+    els.checkCount.textContent = c.done + '/' + c.total;
+    els.checkCount.classList.toggle('is-done', c.done === c.total);
+    els.checkFinish.disabled = checkSaving;
+    return c;
+  }
+
+  function handleCheckScan(raw) {
+    var r = Lookup.resolveTripCheck(raw, index, checkSets.failed, check.checked, checkSets.inTrip);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') {
+      check.checked[r.code] = true;
+      setCheck(check);
+      var c = updateCheckCount();
+      showResult('ok', 'Có', c.done + '/' + c.total + ' đơn FAILED · ' + check.ma_chuyen, r.code);
+      speak(c.done === c.total ? 'Có, đủ đơn' : 'Có');
+      return;
+    }
+    if (r.status === 'duplicate') showResult('unmapped', 'Đã quét', 'Đơn FAILED đã được kiểm', r.code);
+    else if (r.status === 'not_failed') showResult('unmapped', 'Không cần kiểm', 'Đơn của chuyến, trạng thái ' + (r.orderStatus || 'không rõ'), r.code);
+    else showResult('not_found', 'Không thuộc chuyến', check.ma_chuyen + ' · xe ' + check.bks, r.code);
+    speak(r.speech);
+  }
+
+  els.checkBack.addEventListener('click', function () {
+    check.active = false; // progress kept: the trip row offers "Tiếp tục kiểm"
+    setCheck(check);
+    showTripHome();
+  });
+
+  els.checkFinish.addEventListener('click', function () {
+    if (!check || checkSaving) return;
+    var c = checkCounts();
+    var missing = c.total - c.done;
+    var question = missing
+      ? 'Còn thiếu ' + missing + ' đơn FAILED chưa quét. Vẫn kết thúc chuyến ' + check.ma_chuyen + '?'
+      : 'Kết thúc chuyến ' + check.ma_chuyen + ' (xe ' + check.bks + ')?';
+    if (!window.confirm(question)) return;
+    var ending = check;
+    checkSaving = true;
+    updateCheckCount();
+    showResult('pending', 'Đang kết thúc chuyến…', ending.ma_chuyen + ' · xe ' + ending.bks);
+    apiPost({
+      action: 'endTrip',
+      ma_chuyen: ending.ma_chuyen,
+      failed: ending.failed,
+      checked: ending.failed.filter(function (code) { return ending.checked[code]; }),
+    })
+      .then(function (body) {
+        // Its orders are off the truck now: they may join the next trips.
+        ending.codes.forEach(function (code) {
+          var t = takenToday.get(code);
+          if (t && t.ma_chuyen === ending.ma_chuyen) takenToday.delete(code);
+        });
+        setCheck(null);
+        showTripHome('Đã kết thúc chuyến ' + body.ma_chuyen + (body.missing.length ? ' · thiếu ' + body.missing.length + ' đơn FAILED' : ''));
+        speak('Đã kết thúc chuyến');
+      })
+      .catch(function (err) {
+        showResult('error', 'Kết thúc chuyến thất bại', errorText(err));
+        speak('Kết thúc thất bại');
+      })
+      .then(function () {
+        checkSaving = false;
+        if (check) updateCheckCount();
+      });
+  });
+
+  // ---------- Đồng kiểm mode: receiving day + warehouse, scan, save the round once ----------
+  var DK_KEY = 'dongKiem.v1';
+  var dk = null; // {ngay: 'dd/MM/yyyy', kho, codes: [...]} of the round being scanned, or null
+  var dkIn = {};
+  var dkSaving = false;
+
+  function setDk(next) {
+    dk = next;
+    dkIn = next ? toSet(next.codes) : {};
+    try {
+      if (next) localStorage.setItem(DK_KEY, JSON.stringify(next));
+      else localStorage.removeItem(DK_KEY);
+    } catch (e) { /* storage blocked: the round still works until the page is closed */ }
+  }
+
+  function restoreDk() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(DK_KEY) || 'null');
+      if (saved && saved.ngay && saved.kho && Array.isArray(saved.codes)) setDk(saved);
+    } catch (e) { /* corrupt or blocked: no round in progress */ }
+  }
+
+  function leaveDkScreens() {
+    els.dkSetup.hidden = true;
+    els.dkProgress.hidden = true;
+  }
+
+  function showDkScreen() {
+    if (dk) enterDkScan(); else showDkSetup();
+  }
+
+  function showDkSetup(message) {
+    els.dkSetup.hidden = false;
+    els.dkProgress.hidden = true;
+    els.form.hidden = true;
+    els.result.hidden = true;
+    if (!els.dkDay.value) els.dkDay.value = todayInput();
+    els.dkHint.textContent = message || '';
+  }
+
+  els.dkSetup.addEventListener('change', function () { els.dkHint.textContent = ''; });
+
+  els.dkSetup.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var day = inputToDay(els.dkDay.value);
+    var kho = els.dkSetup.querySelector('input[name=dk-kho]:checked');
+    if (!day) { els.dkHint.textContent = 'Chọn ngày nhận đơn'; return; }
+    if (!kho) { els.dkHint.textContent = 'Chọn kho nhận'; return; }
+    setDk({ ngay: day, kho: kho.value, codes: [] });
+    enterDkScan();
+  });
+
+  function enterDkScan() {
+    els.dkSetup.hidden = true;
+    els.dkProgress.hidden = false;
+    els.form.hidden = false;
+    els.result.hidden = false;
+    els.dkLabel.textContent = 'Đồng kiểm · kho ' + dk.kho + ' · nhận ' + dk.ngay;
+    updateDkCount();
+    showResult('idle', 'Sẵn sàng quét', 'Đồng kiểm kho ' + dk.kho);
+    focusInput();
+  }
+
+  function updateDkCount() {
+    els.dkCount.textContent = dk.codes.length + ' đơn';
+    els.dkFinish.disabled = dkSaving || !dk.codes.length;
+  }
+
+  function handleDkScan(raw) {
+    if (!dk || els.dkProgress.hidden) return; // day and warehouse not chosen yet
+    var r = Lookup.resolveDongKiemScan(raw, dkIn);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') {
+      dk.codes.push(r.code);
+      setDk(dk);
+      updateDkCount();
+      showResult('ok', 'Có', dk.codes.length + ' đơn · kho ' + dk.kho, r.code);
+    } else if (r.status === 'duplicate') showResult('unmapped', 'Đã quét', 'Đơn đã có trong lượt này', r.code);
+    else showResult('not_found', 'Không', 'Mã không hợp lệ (cần 8 ký tự chữ/số liền nhau)', r.input);
+    speak(r.speech);
+  }
+
+  els.dkFinish.addEventListener('click', function () {
+    if (!dk || !dk.codes.length || dkSaving) return;
+    if (!window.confirm('Kết thúc đồng kiểm: ' + dk.codes.length + ' đơn · kho ' + dk.kho + ' · ngày nhận ' + dk.ngay + '?')) return;
+    var round = dk;
+    dkSaving = true;
+    updateDkCount();
+    showResult('pending', 'Đang ghi…', round.codes.length + ' đơn · kho ' + round.kho);
+    apiPost({ action: 'dongkiem', ngay: round.ngay, kho: round.kho, codes: round.codes })
+      .then(function (body) {
+        setDk(null);
+        showDkSetup('Đã ghi ' + body.count + ' đơn vào data_dong_kiem · kho ' + round.kho + ' · ngày nhận ' + round.ngay);
+        speak('Đã ghi ' + body.count + ' đơn');
+      })
+      .catch(function (err) {
+        showResult('error', 'Ghi thất bại', errorText(err) + ' — lượt quét vẫn giữ trên máy, bấm Kết thúc để thử lại');
+        speak('Ghi thất bại');
+      })
+      .then(function () {
+        dkSaving = false;
+        if (dk) updateDkCount();
+      });
+  });
+
+  els.dkCancel.addEventListener('click', function () {
+    if (dkSaving) return;
+    if (!window.confirm('Huỷ lượt đồng kiểm? ' + dk.codes.length + ' đơn đã quét sẽ bị xoá khỏi máy.')) return;
+    setDk(null);
+    showDkSetup();
+  });
+
   restoreTripDraft();
+  restoreCheck();
+  restoreDk();
 
   function focusInput() {
     // Keep focus for the barcode gun, but not while the camera is open (avoids popping the mobile keyboard).
