@@ -37,6 +37,7 @@
       <button type="button" class="btn mode-btn" data-mode="routesort" aria-pressed="false">Chia tuyến</button>
       <button type="button" class="btn mode-btn" data-mode="trip" aria-pressed="false">Chuyến đi</button>
       <button type="button" class="btn mode-btn" data-mode="dongkiem" aria-pressed="false">Đồng kiểm</button>
+      <button type="button" class="btn mode-btn" data-mode="trahang" aria-pressed="false">Trả hàng</button>
       <button type="button" class="btn mode-btn" data-mode="backlog" aria-pressed="false">Backlog</button>
       <button type="button" class="btn mode-btn" data-mode="route" aria-pressed="false">Tuyến</button>
     </div>
@@ -87,12 +88,13 @@
       </div>
     </div>
 
-    <!-- Đồng kiểm mode: receiving day + warehouse, then scan; the round is saved once to sheet data_dong_kiem. -->
+    <!-- Đồng kiểm / Trả hàng modes: day + warehouse, then scan; the round is saved once to sheet
+         data_dong_kiem / tra_hang. Labels are set per mode by app.js. -->
     <form id="dk-setup" class="trip-plate-form" autocomplete="off" hidden>
-      <label for="dk-day">Ngày nhận đơn</label>
+      <label id="dk-day-label" for="dk-day">Ngày nhận đơn</label>
       <input id="dk-day" class="day-input" type="date" />
       <fieldset class="dk-kho">
-        <legend>Kho nhận</legend>
+        <legend id="dk-kho-legend">Kho nhận</legend>
         <label class="btn"><input type="radio" name="dk-kho" value="Thuận Thành" /> Thuận Thành</label>
         <label class="btn"><input type="radio" name="dk-kho" value="Yên Phong" /> Yên Phong</label>
       </fieldset>

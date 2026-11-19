@@ -2,7 +2,7 @@
 // GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config.
 // GET ?action=locate&code=X returns the map point of one order (see locate.js).
 // GET ?action=trips&day=dd/MM/yyyy / ?action=opentrips and POST {action:'trip'|'endTrip'} manage trips (see trips.js).
-// POST {action:'dongkiem', ngay, kho, codes} saves a round of received orders (see dong-kiem.js).
+// POST {action:'dongkiem'|'trahang', ngay, kho, codes} saves a round of received / returned orders (see scan-rounds.js).
 // Customer PII (name, phone, address) never leaves the sheet.
 //
 // The UI is hosted outside Apps Script (GitHub Pages, see web/) because the Apps Script
@@ -138,6 +138,7 @@ function doPost(e) {
     if (body.action === 'trip') return jsonOutput_(createTrip(body.plate, body.codes));
     if (body.action === 'endTrip') return jsonOutput_(endTrip(body.ma_chuyen, body.failed, body.checked));
     if (body.action === 'dongkiem') return jsonOutput_(saveDongKiem(body.ngay, body.kho, body.codes));
+    if (body.action === 'trahang') return jsonOutput_(saveTraHang(body.ngay, body.kho, body.codes));
     throw new Error('Thao tác không hợp lệ');
   } catch (err) {
     return jsonOutput_({ error: String((err && err.message) || err) });

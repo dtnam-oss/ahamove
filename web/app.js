@@ -46,6 +46,8 @@
     checkBack: $('check-back'),
     dkSetup: $('dk-setup'),
     dkDay: $('dk-day'),
+    dkDayLabel: $('dk-day-label'),
+    dkKhoLegend: $('dk-kho-legend'),
     dkHint: $('dk-hint'),
     dkProgress: $('dk-progress'),
     dkLabel: $('dk-label'),
@@ -71,6 +73,7 @@
   var CAMERA_REPEAT_MS = 2500; // ignore the same code re-read by the live camera within this window
 
   // 'sort' = sorting location | 'routesort' = route | 'trip' = load/end a trip | 'dongkiem' = received orders
+  // | 'trahang' = returned orders
   // | 'backlog' = days left | 'route' = route check
   var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
@@ -171,7 +174,7 @@
   }
 
   function handleScan(raw) {
-    if (mode === 'dongkiem') { handleDkScan(raw); return; } // checks the code format only, no data needed
+    if (isRoundMode(mode)) { handleDkScan(raw); return; } // checks the code format only, no data needed
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     if (mode === 'trip') { if (check && !els.checkProgress.hidden) handleCheckScan(raw); else handleTripScan(raw); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
@@ -197,7 +200,7 @@
     leaveDkScreens();
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
     if (mode === 'trip') { showTripScreen(); return; }
-    if (mode === 'dongkiem') { showDkScreen(); return; }
+    if (isRoundMode(mode)) { showDkScreen(mode); return; }
     var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     focusInput();
@@ -860,26 +863,42 @@
       });
   });
 
-  // ---------- Đồng kiểm mode: receiving day + warehouse, scan, save the round once ----------
-  var DK_KEY = 'dongKiem.v1';
-  var dk = null; // {ngay: 'dd/MM/yyyy', kho, codes: [...]} of the round being scanned, or null
+  // ---------- Đồng kiểm / Trả hàng modes: day + warehouse, scan, save the round once ----------
+  // Both modes share one screen; each keeps its own round on the device.
+  var ROUND_KINDS = {
+    dongkiem: { title: 'Đồng kiểm', key: 'dongKiem.v1', sheet: 'data_dong_kiem', dayLabel: 'Ngày nhận đơn', khoLabel: 'Kho nhận', dayWord: 'nhận' },
+    trahang: { title: 'Trả hàng', key: 'traHang.v1', sheet: 'tra_hang', dayLabel: 'Ngày trả', khoLabel: 'Kho trả', dayWord: 'trả' },
+  };
+  var rounds = { dongkiem: null, trahang: null }; // per mode: {ngay: 'dd/MM/yyyy', kho, codes: [...]} or null
+  var dkKind = 'dongkiem'; // mode whose round the shared screen shows
+  var dk = null; // rounds[dkKind]
   var dkIn = {};
   var dkSaving = false;
 
+  function isRoundMode(m) { return Object.prototype.hasOwnProperty.call(ROUND_KINDS, m); }
+
+  function useKind(kind) {
+    dkKind = kind;
+    dk = rounds[kind];
+    dkIn = dk ? toSet(dk.codes) : {};
+  }
+
   function setDk(next) {
-    dk = next;
-    dkIn = next ? toSet(next.codes) : {};
+    rounds[dkKind] = next;
+    useKind(dkKind);
     try {
-      if (next) localStorage.setItem(DK_KEY, JSON.stringify(next));
-      else localStorage.removeItem(DK_KEY);
+      if (next) localStorage.setItem(ROUND_KINDS[dkKind].key, JSON.stringify(next));
+      else localStorage.removeItem(ROUND_KINDS[dkKind].key);
     } catch (e) { /* storage blocked: the round still works until the page is closed */ }
   }
 
   function restoreDk() {
-    try {
-      var saved = JSON.parse(localStorage.getItem(DK_KEY) || 'null');
-      if (saved && saved.ngay && saved.kho && Array.isArray(saved.codes)) setDk(saved);
-    } catch (e) { /* corrupt or blocked: no round in progress */ }
+    Object.keys(ROUND_KINDS).forEach(function (kind) {
+      try {
+        var saved = JSON.parse(localStorage.getItem(ROUND_KINDS[kind].key) || 'null');
+        if (saved && saved.ngay && saved.kho && Array.isArray(saved.codes)) rounds[kind] = saved;
+      } catch (e) { /* corrupt or blocked: no round in progress */ }
+    });
   }
 
   function leaveDkScreens() {
@@ -887,7 +906,11 @@
     els.dkProgress.hidden = true;
   }
 
-  function showDkScreen() {
+  function showDkScreen(kind) {
+    useKind(kind);
+    var k = ROUND_KINDS[kind];
+    els.dkDayLabel.textContent = k.dayLabel;
+    els.dkKhoLegend.textContent = k.khoLabel;
     if (dk) enterDkScan(); else showDkSetup();
   }
 
@@ -904,22 +927,24 @@
 
   els.dkSetup.addEventListener('submit', function (e) {
     e.preventDefault();
+    var k = ROUND_KINDS[dkKind];
     var day = inputToDay(els.dkDay.value);
     var kho = els.dkSetup.querySelector('input[name=dk-kho]:checked');
-    if (!day) { els.dkHint.textContent = 'Chọn ngày nhận đơn'; return; }
-    if (!kho) { els.dkHint.textContent = 'Chọn kho nhận'; return; }
+    if (!day) { els.dkHint.textContent = 'Chọn ' + k.dayLabel.toLowerCase(); return; }
+    if (!kho) { els.dkHint.textContent = 'Chọn ' + k.khoLabel.toLowerCase(); return; }
     setDk({ ngay: day, kho: kho.value, codes: [] });
     enterDkScan();
   });
 
   function enterDkScan() {
+    var k = ROUND_KINDS[dkKind];
     els.dkSetup.hidden = true;
     els.dkProgress.hidden = false;
     els.form.hidden = false;
     els.result.hidden = false;
-    els.dkLabel.textContent = 'Đồng kiểm · kho ' + dk.kho + ' · nhận ' + dk.ngay;
+    els.dkLabel.textContent = k.title + ' · kho ' + dk.kho + ' · ' + k.dayWord + ' ' + dk.ngay;
     updateDkCount();
-    showResult('idle', 'Sẵn sàng quét', 'Đồng kiểm kho ' + dk.kho);
+    showResult('idle', 'Sẵn sàng quét', k.title + ' kho ' + dk.kho);
     focusInput();
   }
 
@@ -930,7 +955,7 @@
 
   function handleDkScan(raw) {
     if (!dk || els.dkProgress.hidden) return; // day and warehouse not chosen yet
-    var r = Lookup.resolveDongKiemScan(raw, dkIn);
+    var r = Lookup.resolveDongKiemScan(raw, dkIn); // same code rule for both modes
     if (r.status === 'empty') return;
     if (r.status === 'ok') {
       dk.codes.push(r.code);
@@ -944,19 +969,28 @@
 
   els.dkFinish.addEventListener('click', function () {
     if (!dk || !dk.codes.length || dkSaving) return;
-    if (!window.confirm('Kết thúc đồng kiểm: ' + dk.codes.length + ' đơn · kho ' + dk.kho + ' · ngày nhận ' + dk.ngay + '?')) return;
+    var kind = dkKind;
+    var k = ROUND_KINDS[kind];
+    if (!window.confirm('Kết thúc ' + k.title.toLowerCase() + ': ' + dk.codes.length + ' đơn · kho ' + dk.kho + ' · ngày ' + k.dayWord + ' ' + dk.ngay + '?')) return;
     var round = dk;
     dkSaving = true;
     updateDkCount();
     showResult('pending', 'Đang ghi…', round.codes.length + ' đơn · kho ' + round.kho);
-    apiPost({ action: 'dongkiem', ngay: round.ngay, kho: round.kho, codes: round.codes })
+    apiPost({ action: kind, ngay: round.ngay, kho: round.kho, codes: round.codes })
       .then(function (body) {
+        var shown = dkKind === kind && isRoundMode(mode);
+        var was = dkKind;
+        useKind(kind);
         setDk(null);
-        showDkSetup('Đã ghi ' + body.count + ' đơn vào data_dong_kiem · kho ' + round.kho + ' · ngày nhận ' + round.ngay);
+        useKind(was);
+        var text = 'Đã ghi ' + body.count + ' đơn vào ' + k.sheet + ' · kho ' + round.kho + ' · ngày ' + k.dayWord + ' ' + round.ngay;
+        if (shown) showDkSetup(text);
         speak('Đã ghi ' + body.count + ' đơn');
       })
       .catch(function (err) {
-        showResult('error', 'Ghi thất bại', errorText(err) + ' — lượt quét vẫn giữ trên máy, bấm Kết thúc để thử lại');
+        if (dkKind === kind && isRoundMode(mode)) {
+          showResult('error', 'Ghi thất bại', errorText(err) + ' — lượt quét vẫn giữ trên máy, bấm Kết thúc để thử lại');
+        }
         speak('Ghi thất bại');
       })
       .then(function () {
@@ -966,8 +1000,9 @@
   });
 
   els.dkCancel.addEventListener('click', function () {
-    if (dkSaving) return;
-    if (!window.confirm('Huỷ lượt đồng kiểm? ' + dk.codes.length + ' đơn đã quét sẽ bị xoá khỏi máy.')) return;
+    if (dkSaving || !dk) return;
+    var k = ROUND_KINDS[dkKind];
+    if (!window.confirm('Huỷ lượt ' + k.title.toLowerCase() + '? ' + dk.codes.length + ' đơn đã quét sẽ bị xoá khỏi máy.')) return;
     setDk(null);
     showDkSetup();
   });

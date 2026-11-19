@@ -113,7 +113,7 @@ function loadServer(tables, geo = {}) {
   vm.runInContext(read('gas/goong.js'), ctx);
   vm.runInContext(read('gas/locate.js'), ctx);
   vm.runInContext(read('gas/trips.js'), ctx);
-  vm.runInContext(read('gas/dong-kiem.js'), ctx);
+  vm.runInContext(read('gas/scan-rounds.js'), ctx);
   return ctx;
 }
 
@@ -863,4 +863,25 @@ test('saveDongKiem rejects bad day, warehouse or codes; endpoint answers {error}
   const post = (body) => JSON.parse(server.doPost({ postData: { contents: JSON.stringify(body) } }).text);
   assert.equal(post({ action: 'dongkiem', ngay: '18/11/2026', kho: 'Thuận Thành', codes: ['GYE7WB4C'] }).count, 1);
   assert.match(post({ action: 'dongkiem', ngay: '18/11/2026', kho: '', codes: ['GYE7WB4C'] }).error, /Kho nhận/);
+});
+
+test('saveTraHang writes sheet tra_hang with its own day/warehouse columns; data_dong_kiem untouched', () => {
+  const tables = { raw_data: DATA, config: CONFIG };
+  const server = loadServer(tables);
+  const r = server.saveTraHang('19/11/2026', 'Thuận Thành', [' gye7wb4c ', 'GYEFAPQW', 'GYE7WB4C']);
+  assert.equal(r.count, 2);
+  assert.deepEqual(plain(tables.tra_hang), [
+    ['ngay_tra', 'kho_tra', 'tracking_number', 'thoi_gian'],
+    ['19/11/2026', 'Thuận Thành', 'GYE7WB4C', r.thoi_gian],
+    ['19/11/2026', 'Thuận Thành', 'GYEFAPQW', r.thoi_gian],
+  ]);
+  assert.equal(tables.data_dong_kiem, undefined);
+
+  assert.throws(() => server.saveTraHang('19-11-2026', 'Yên Phong', ['GYE7WB4C']), /Ngày trả không hợp lệ/);
+  assert.throws(() => server.saveTraHang('19/11/2026', 'Hà Nội', ['GYE7WB4C']), /Kho trả không hợp lệ/);
+  assert.throws(() => server.saveTraHang('19/11/2026', 'Yên Phong', ['GYE7WB4']), /Mã không hợp lệ/);
+  const post = (body) => JSON.parse(server.doPost({ postData: { contents: JSON.stringify(body) } }).text);
+  assert.equal(post({ action: 'trahang', ngay: '19/11/2026', kho: 'Yên Phong', codes: ['GYE7WB4C'] }).count, 1);
+  assert.equal(plain(tables.tra_hang).length, 4);
+  assert.match(post({ action: 'trahang', ngay: '19/11/2026', kho: 'x', codes: ['GYE7WB4C'] }).error, /Kho trả/);
 });
