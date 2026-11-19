@@ -167,6 +167,10 @@ html, body {
 .trip-state.is-ended { color: var(--ok); }
 .trip-state.has-missing { color: var(--warn); }
 .trip-missing { color: var(--warn); font-size: 0.9rem; }
+/* Running trips with FAILED orders to bring back: red edge, red pill next to the state, codes in the detail. */
+.trip-item.has-failed { border-left: 4px solid var(--error); }
+.trip-failed { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--error); color: #fff; font-weight: 700; font-size: 0.85rem; }
+.trip-failed-codes { color: var(--error); font-size: 0.9rem; font-weight: 700; }
 .trip-plate { font-weight: 700; }
 .trip-head { display: none; }
 .trip-detail { padding: 0 12px 12px; display: grid; gap: 8px; }

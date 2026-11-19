@@ -536,7 +536,9 @@
         if (seq !== tripListSeq) return;
         renderTrips(body.trips);
         var orders = body.trips.reduce(function (n, t) { return n + t.codes.length; }, 0);
-        els.tripNote.textContent = message || body.trips.length + ' chuyến · ' + orders + ' đơn · ngày ' + body.day;
+        var failed = body.trips.reduce(function (n, t) { return n + tripFailed(t).length; }, 0);
+        els.tripNote.textContent = message || body.trips.length + ' chuyến · ' + orders + ' đơn' +
+          (failed ? ' · ' + failed + ' đơn FAILED cần xử lý' : '') + ' · ngày ' + body.day;
       })
       .catch(function (err) {
         if (seq === tripListSeq) els.tripNote.textContent = 'Lỗi tải danh sách chuyến: ' + errorText(err);
@@ -584,9 +586,15 @@
     shown.forEach(function (trip) { els.tripList.appendChild(tripItem(trip)); });
   }
 
+  /** FAILED orders of a running trip from the loaded raw_data ("Tải lại" refreshes them); none once ended. */
+  function tripFailed(trip) {
+    return !trip.ket_thuc && index ? Lookup.tripFailedCodes(trip.codes, index) : [];
+  }
+
   /** One row per trip: a card on phones, a table row on wider screens (CSS); "Xem đơn" opens the codes. */
   function tripItem(trip) {
-    var item = el('div', 'trip-item');
+    var failed = tripFailed(trip);
+    var item = el('div', 'trip-item' + (failed.length ? ' has-failed' : ''));
     var row = el('div', 'trip-row');
     row.appendChild(el('b', 'trip-id', trip.ma_chuyen));
     row.appendChild(el('span', 'trip-plate', trip.bks));
@@ -594,6 +602,7 @@
     row.appendChild(el('span', 'trip-total', trip.codes.length + ' đơn'));
     var state = el('span', 'trip-state' + (trip.ket_thuc ? ' is-ended' : ''), tripState(trip));
     if (trip.missing.length) state.classList.add('has-missing');
+    if (failed.length) state.appendChild(el('span', 'trip-failed', failed.length + ' FAILED'));
     row.appendChild(state);
     var actions = el('div', 'trip-actions');
     var toggle = el('button', 'btn trip-toggle', 'Xem đơn');
@@ -611,6 +620,7 @@
 
     var detail = el('div', 'trip-detail');
     detail.hidden = true;
+    if (failed.length) detail.appendChild(el('div', 'trip-failed-codes', 'Đơn FAILED: ' + failed.join(', ')));
     if (trip.missing.length) detail.appendChild(el('div', 'trip-missing', 'Thiếu khi bắn kiểm: ' + trip.missing.join(', ')));
     var codes = el('textarea', 'trip-codes');
     codes.readOnly = true;

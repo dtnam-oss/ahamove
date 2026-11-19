@@ -55,6 +55,7 @@ Thay cho chế độ Ghi sheet cũ (sheet `data_don` giữ nguyên, không còn 
 
 **Danh sách chuyến:** ở màn hình Chuyến đi, chọn ngày (mặc định hôm nay) → các chuyến mới nhất trước, của mọi máy. Bấm **Xem đơn** để hiện danh sách mã (mỗi đơn một dòng) và **Copy** để dán sang ứng dụng khác. Điện thoại hiện dạng thẻ, màn hình rộng (≥ 640px) hiện dạng bảng.
 - Tab lọc theo trạng thái (kèm số chuyến): **Tất cả** · **Đang chạy** (chưa kết thúc) · **Đã kết thúc** · **Thiếu đơn** (đã kết thúc nhưng còn đơn FAILED chưa quét). Lọc ngay trên danh sách của ngày đang chọn; tab đang chọn được giữ khi đổi ngày hoặc tải lại danh sách.
+- Chuyến **Đang chạy** có đơn đang `FAILED` trong `raw_data` được viền đỏ và gắn nhãn đỏ **N FAILED**; **Xem đơn** liệt kê mã FAILED; dòng tổng hiện "N đơn FAILED cần xử lý". Trạng thái lấy từ `raw_data` đã tải trên máy — bấm **Tải lại** để cập nhật. Chuyến đã kết thúc không tính (đã bắn kiểm).
 
 **Kết thúc chuyến (bắn kiểm):** trên mỗi chuyến **Đang chạy**, bấm **Kết thúc** → trang tải lại trạng thái mới nhất trong `raw_data` → hiện số đơn `FAILED` của chuyến (`0/N`) → quét lại từng đơn FAILED về kho:
 
