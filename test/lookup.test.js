@@ -816,6 +816,29 @@ test('bắn kiểm: FAILED orders of the trip from current statuses; "Có", repe
   assert.equal(Lookup.resolveTripCheck('  ', index, failed, {}, inTrip).status, 'empty');
 });
 
+test('bắn kiểm lists: FAILED orders split into scanned and still missing, in trip order', () => {
+  const Lookup = loadLookup();
+  const failed = ['AAAA1111', 'BBBB2222', 'CCCC3333'];
+  const none = Lookup.tripCheckLists(failed, {});
+  assert.deepEqual([[...none.scanned], [...none.missing]], [[], failed]);
+  const some = Lookup.tripCheckLists(failed, { CCCC3333: true, AAAA1111: true, ZZZZ9999: true });
+  assert.deepEqual([[...some.scanned], [...some.missing]], [['AAAA1111', 'CCCC3333'], ['BBBB2222']]);
+  const empty = Lookup.tripCheckLists([], {});
+  assert.deepEqual([[...empty.scanned], [...empty.missing]], [[], []]);
+});
+
+test('trip filter tabs: running, ended, ended with missing FAILED orders', () => {
+  const Lookup = loadLookup();
+  const running = { ket_thuc: '', missing: [] };
+  const ended = { ket_thuc: '19/11/2026 17:20:00', missing: [] };
+  const short = { ket_thuc: '19/11/2026 18:00:00', missing: ['BBBB2222'] };
+  const pick = (f) => [running, ended, short].map((t) => Lookup.tripMatchesFilter(t, f));
+  assert.deepEqual(pick('all'), [true, true, true]);
+  assert.deepEqual(pick('open'), [true, false, false]);
+  assert.deepEqual(pick('ended'), [false, true, true]);
+  assert.deepEqual(pick('missing'), [false, false, true]);
+});
+
 test('đồng kiểm scan: 8 letters/digits is "Có", anything else "Không", repeats "Đã quét"', () => {
   const Lookup = loadLookup();
   const ok = Lookup.resolveDongKiemScan(' gye7wb4c ', {});

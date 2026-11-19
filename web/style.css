@@ -147,7 +147,16 @@ html, body {
   color: var(--text);
   color-scheme: dark;
 }
+.trip-filter { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.trip-filter .btn { padding: 8px 4px; font-size: 0.95rem; line-height: 1.2; }
+.trip-filter .btn b { display: block; font-size: 1.1rem; }
+.trip-filter .btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
 .trip-list { display: grid; gap: 8px; }
+.check-lists { display: grid; gap: 10px; }
+.check-list { background: var(--panel); border: 1px solid #334155; border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; align-content: start; }
+.check-list.is-missing { border-color: var(--warn); }
+.check-codes { display: flex; flex-wrap: wrap; gap: 6px; font-family: ui-monospace, monospace; }
+.check-codes span { background: #020617; border: 1px solid #334155; border-radius: 6px; padding: 2px 6px; }
 .trip-item { background: var(--panel); border: 1px solid #334155; border-radius: 12px; }
 .trip-item.is-open { border-color: var(--primary); }
 /* Phone: each trip is a card - id and plate, time and order count, state; the buttons on the right. */
@@ -183,6 +192,7 @@ html, body {
   .trip-row .trip-actions { grid-column: auto; grid-row: auto; }
   .trip-row .trip-state { grid-column: auto; }
   .trip-head { display: grid; color: var(--muted); font-size: 0.85rem; padding-top: 0; padding-bottom: 0; border: 1px solid transparent; }
+  .check-lists { grid-template-columns: 1fr 1fr; }
 }
 
 

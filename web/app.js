@@ -33,6 +33,7 @@
     tripPlateCancel: $('trip-plate-cancel'),
     tripDay: $('trip-day'),
     tripNote: $('trip-note'),
+    tripFilter: $('trip-filter'),
     tripList: $('trip-list'),
     tripProgress: $('trip-progress'),
     tripPlateLabel: $('trip-plate-label'),
@@ -44,6 +45,11 @@
     checkCount: $('check-count'),
     checkFinish: $('check-finish'),
     checkBack: $('check-back'),
+    checkLists: $('check-lists'),
+    checkMissingTitle: $('check-missing-title'),
+    checkMissing: $('check-missing'),
+    checkScannedTitle: $('check-scanned-title'),
+    checkScanned: $('check-scanned'),
     dkSetup: $('dk-setup'),
     dkDay: $('dk-day'),
     dkDayLabel: $('dk-day-label'),
@@ -499,6 +505,7 @@
     els.tripHome.hidden = true;
     els.tripProgress.hidden = true;
     els.checkProgress.hidden = true;
+    els.checkLists.hidden = true;
   }
 
   function showTripScreen() {
@@ -511,6 +518,7 @@
     els.tripHome.hidden = false;
     els.tripProgress.hidden = true;
     els.checkProgress.hidden = true;
+    els.checkLists.hidden = true;
     els.form.hidden = true;
     els.result.hidden = true;
     els.tripPlateForm.hidden = true;
@@ -543,59 +551,85 @@
     return 'Đã kết thúc ' + when + (trip.missing.length ? ' · thiếu ' + trip.missing.length : '');
   }
 
-  /** One row per trip: a card on phones, a table row on wider screens (CSS); "Xem đơn" opens the codes. */
+  // Status tabs over the loaded day's trips: filtering is local, the chosen tab survives list reloads.
+  var tripFilter = 'all';
+  var dayTrips = [];
+  var filterButtons = Array.prototype.slice.call(els.tripFilter.querySelectorAll('button'));
+  filterButtons.forEach(function (button) {
+    button.dataset.label = button.textContent;
+    button.addEventListener('click', function () {
+      tripFilter = button.dataset.filter;
+      renderTrips(dayTrips);
+    });
+  });
+
+  /** The tab counts and the trips of the chosen tab. */
   function renderTrips(trips) {
+    dayTrips = trips;
+    els.tripFilter.hidden = false;
+    filterButtons.forEach(function (button) {
+      var n = trips.filter(function (t) { return Lookup.tripMatchesFilter(t, button.dataset.filter); }).length;
+      button.textContent = '';
+      button.appendChild(document.createTextNode(button.dataset.label));
+      button.appendChild(el('b', '', String(n)));
+      button.setAttribute('aria-pressed', String(button.dataset.filter === tripFilter));
+    });
+    var shown = trips.filter(function (t) { return Lookup.tripMatchesFilter(t, tripFilter); });
     els.tripList.textContent = '';
     if (!trips.length) { els.tripList.appendChild(el('div', 'muted', 'Chưa có chuyến nào trong ngày này.')); return; }
+    if (!shown.length) { els.tripList.appendChild(el('div', 'muted', 'Không có chuyến nào ở mục này.')); return; }
     var head = el('div', 'trip-row trip-head');
     ['Mã chuyến', 'BKS', 'Giờ tạo', 'Số đơn', 'Trạng thái', ''].forEach(function (t) { head.appendChild(el('span', '', t)); });
     els.tripList.appendChild(head);
-    trips.forEach(function (trip) {
-      var item = el('div', 'trip-item');
-      var row = el('div', 'trip-row');
-      row.appendChild(el('b', 'trip-id', trip.ma_chuyen));
-      row.appendChild(el('span', 'trip-plate', trip.bks));
-      row.appendChild(el('span', 'trip-time muted', trip.thoi_gian.slice(11, 16)));
-      row.appendChild(el('span', 'trip-total', trip.codes.length + ' đơn'));
-      var state = el('span', 'trip-state' + (trip.ket_thuc ? ' is-ended' : ''), tripState(trip));
-      if (trip.missing.length) state.classList.add('has-missing');
-      row.appendChild(state);
-      var actions = el('div', 'trip-actions');
-      var toggle = el('button', 'btn trip-toggle', 'Xem đơn');
-      toggle.type = 'button';
-      actions.appendChild(toggle);
-      if (!trip.ket_thuc) {
-        var mine = check && check.ma_chuyen === trip.ma_chuyen;
-        var end = el('button', 'btn btn-primary trip-end', mine ? 'Tiếp tục kiểm ' + checkProgressText() : 'Kết thúc');
-        end.type = 'button';
-        end.addEventListener('click', function () { startCheck(trip); });
-        actions.appendChild(end);
-      }
-      row.appendChild(actions);
-      item.appendChild(row);
+    shown.forEach(function (trip) { els.tripList.appendChild(tripItem(trip)); });
+  }
 
-      var detail = el('div', 'trip-detail');
-      detail.hidden = true;
-      if (trip.missing.length) detail.appendChild(el('div', 'trip-missing', 'Thiếu khi bắn kiểm: ' + trip.missing.join(', ')));
-      var codes = el('textarea', 'trip-codes');
-      codes.readOnly = true;
-      codes.value = trip.codes.join('\n'); // one order per line, ready to paste elsewhere
-      codes.rows = Math.min(trip.codes.length, 10);
-      codes.setAttribute('aria-label', 'Đơn của chuyến ' + trip.ma_chuyen);
-      var copy = el('button', 'btn btn-primary', 'Copy ' + trip.codes.length + ' đơn');
-      copy.type = 'button';
-      copy.addEventListener('click', function () { copyCodes(codes, copy); });
-      detail.appendChild(codes);
-      detail.appendChild(copy);
-      item.appendChild(detail);
+  /** One row per trip: a card on phones, a table row on wider screens (CSS); "Xem đơn" opens the codes. */
+  function tripItem(trip) {
+    var item = el('div', 'trip-item');
+    var row = el('div', 'trip-row');
+    row.appendChild(el('b', 'trip-id', trip.ma_chuyen));
+    row.appendChild(el('span', 'trip-plate', trip.bks));
+    row.appendChild(el('span', 'trip-time muted', trip.thoi_gian.slice(11, 16)));
+    row.appendChild(el('span', 'trip-total', trip.codes.length + ' đơn'));
+    var state = el('span', 'trip-state' + (trip.ket_thuc ? ' is-ended' : ''), tripState(trip));
+    if (trip.missing.length) state.classList.add('has-missing');
+    row.appendChild(state);
+    var actions = el('div', 'trip-actions');
+    var toggle = el('button', 'btn trip-toggle', 'Xem đơn');
+    toggle.type = 'button';
+    actions.appendChild(toggle);
+    if (!trip.ket_thuc) {
+      var mine = check && check.ma_chuyen === trip.ma_chuyen;
+      var end = el('button', 'btn btn-primary trip-end', mine ? 'Tiếp tục kiểm ' + checkProgressText() : 'Kết thúc');
+      end.type = 'button';
+      end.addEventListener('click', function () { startCheck(trip); });
+      actions.appendChild(end);
+    }
+    row.appendChild(actions);
+    item.appendChild(row);
 
-      toggle.addEventListener('click', function () {
-        detail.hidden = !detail.hidden;
-        toggle.textContent = detail.hidden ? 'Xem đơn' : 'Ẩn đơn';
-        item.classList.toggle('is-open', !detail.hidden);
-      });
-      els.tripList.appendChild(item);
+    var detail = el('div', 'trip-detail');
+    detail.hidden = true;
+    if (trip.missing.length) detail.appendChild(el('div', 'trip-missing', 'Thiếu khi bắn kiểm: ' + trip.missing.join(', ')));
+    var codes = el('textarea', 'trip-codes');
+    codes.readOnly = true;
+    codes.value = trip.codes.join('\n'); // one order per line, ready to paste elsewhere
+    codes.rows = Math.min(trip.codes.length, 10);
+    codes.setAttribute('aria-label', 'Đơn của chuyến ' + trip.ma_chuyen);
+    var copy = el('button', 'btn btn-primary', 'Copy ' + trip.codes.length + ' đơn');
+    copy.type = 'button';
+    copy.addEventListener('click', function () { copyCodes(codes, copy); });
+    detail.appendChild(codes);
+    detail.appendChild(copy);
+    item.appendChild(detail);
+
+    toggle.addEventListener('click', function () {
+      detail.hidden = !detail.hidden;
+      toggle.textContent = detail.hidden ? 'Xem đơn' : 'Ẩn đơn';
+      item.classList.toggle('is-open', !detail.hidden);
     });
+    return item;
   }
 
   function copyCodes(textarea, button) {
@@ -754,6 +788,20 @@
     return { done: done, total: check.failed.length };
   }
 
+  /** The FAILED orders still missing and already scanned back, shown under the result while checking. */
+  function renderCheckLists() {
+    var lists = Lookup.tripCheckLists(check.failed, check.checked);
+    els.checkLists.hidden = !check.failed.length || els.checkProgress.hidden; // only on the check screen
+    var fill = function (box, title, label, codes, empty) {
+      title.textContent = label + ' (' + codes.length + ')';
+      box.textContent = '';
+      if (!codes.length) { box.appendChild(el('span', 'muted', empty)); return; }
+      codes.forEach(function (code) { box.appendChild(el('span', '', code)); });
+    };
+    fill(els.checkMissing, els.checkMissingTitle, 'Còn thiếu', lists.missing, 'Đã quét đủ');
+    fill(els.checkScanned, els.checkScannedTitle, 'Đã quét', lists.scanned, 'Chưa quét đơn nào');
+  }
+
   function checkProgressText() {
     var c = checkCounts();
     return c.done + '/' + c.total;
@@ -800,6 +848,7 @@
     els.checkCount.textContent = c.done + '/' + c.total;
     els.checkCount.classList.toggle('is-done', c.done === c.total);
     els.checkFinish.disabled = checkSaving;
+    renderCheckLists();
     return c;
   }
 

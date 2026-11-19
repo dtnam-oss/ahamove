@@ -61,6 +61,12 @@
         <input id="trip-day" class="day-input" type="date" />
       </div>
       <div id="trip-note" class="muted" aria-live="polite"></div>
+      <div id="trip-filter" class="trip-filter" role="group" aria-label="Lọc chuyến theo trạng thái" hidden>
+        <button type="button" class="btn" data-filter="all" aria-pressed="true">Tất cả</button>
+        <button type="button" class="btn" data-filter="open" aria-pressed="false">Đang chạy</button>
+        <button type="button" class="btn" data-filter="ended" aria-pressed="false">Đã kết thúc</button>
+        <button type="button" class="btn" data-filter="missing" aria-pressed="false">Thiếu đơn</button>
+      </div>
       <div id="trip-list" class="trip-list"></div>
     </section>
 
@@ -155,6 +161,18 @@
       <div id="result-location" class="result-location">Sẵn sàng quét</div>
       <div id="result-district" class="result-district"></div>
       <div id="result-code" class="result-code"></div>
+    </section>
+
+    <!-- Chuyến đi mode, ending a trip: the FAILED orders still missing and already scanned back. -->
+    <section id="check-lists" class="check-lists" hidden>
+      <div class="check-list is-missing">
+        <b id="check-missing-title"></b>
+        <div id="check-missing" class="check-codes"></div>
+      </div>
+      <div class="check-list">
+        <b id="check-scanned-title"></b>
+        <div id="check-scanned" class="check-codes"></div>
+      </div>
     </section>
 
     <!-- Tuyến mode: wards of the selected routes and the scanned orders on a Goong map (order-map.js). -->

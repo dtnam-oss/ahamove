@@ -252,6 +252,21 @@ var Lookup = (function () {
    * "Bắn kiểm" when a trip ends: is this scan one of the trip's FAILED orders?
    * failed / checked / inTrip: {code: true}. status: 'empty' | 'ok' | 'duplicate' | 'not_failed' | 'other'.
    */
+  /** FAILED orders of an end-of-trip check split into scanned back and still missing (both in trip order). */
+  function tripCheckLists(failed, checked) {
+    var lists = { scanned: [], missing: [] };
+    failed.forEach(function (c) { (checked[c] ? lists.scanned : lists.missing).push(c); });
+    return lists;
+  }
+
+  /** Trip list filter tabs: 'open' = not ended, 'ended', 'missing' = ended with FAILED orders not scanned back. */
+  function tripMatchesFilter(trip, filter) {
+    if (filter === 'open') return !trip.ket_thuc;
+    if (filter === 'ended') return Boolean(trip.ket_thuc);
+    if (filter === 'missing') return Boolean(trip.ket_thuc) && trip.missing.length > 0;
+    return true; // 'all'
+  }
+
   function resolveTripCheck(raw, index, failed, checked, inTrip) {
     if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
     var code = findCode(raw, index.orders) || normalizeCode(raw);
@@ -318,6 +333,8 @@ var Lookup = (function () {
     resolveTripScan: resolveTripScan,
     tripFailedCodes: tripFailedCodes,
     resolveTripCheck: resolveTripCheck,
+    tripCheckLists: tripCheckLists,
+    tripMatchesFilter: tripMatchesFilter,
     resolveDongKiemScan: resolveDongKiemScan,
     resolveDongKiemPending: resolveDongKiemPending,
     pendingTotal: pendingTotal,

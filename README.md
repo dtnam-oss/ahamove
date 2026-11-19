@@ -54,6 +54,7 @@ Thay cho chế độ Ghi sheet cũ (sheet `data_don` giữ nguyên, không còn 
 - Sheet `chuyen_di` (tự tạo ở lần lưu đầu): mỗi đơn một dòng `ma_chuyen | bks | thoi_gian | tracking_number | ket_thuc | ban_kiem`, dạng text (sheet cũ 4 cột được tự thêm 2 tiêu đề mới, dữ liệu cũ giữ nguyên). Mã chuyến `CD<yyMMdd>-<số thứ tự trong ngày>`, vd `CD261113-01`; giờ Việt Nam.
 
 **Danh sách chuyến:** ở màn hình Chuyến đi, chọn ngày (mặc định hôm nay) → các chuyến mới nhất trước, của mọi máy. Bấm **Xem đơn** để hiện danh sách mã (mỗi đơn một dòng) và **Copy** để dán sang ứng dụng khác. Điện thoại hiện dạng thẻ, màn hình rộng (≥ 640px) hiện dạng bảng.
+- Tab lọc theo trạng thái (kèm số chuyến): **Tất cả** · **Đang chạy** (chưa kết thúc) · **Đã kết thúc** · **Thiếu đơn** (đã kết thúc nhưng còn đơn FAILED chưa quét). Lọc ngay trên danh sách của ngày đang chọn; tab đang chọn được giữ khi đổi ngày hoặc tải lại danh sách.
 
 **Kết thúc chuyến (bắn kiểm):** trên mỗi chuyến **Đang chạy**, bấm **Kết thúc** → trang tải lại trạng thái mới nhất trong `raw_data` → hiện số đơn `FAILED` của chuyến (`0/N`) → quét lại từng đơn FAILED về kho:
 
@@ -63,6 +64,8 @@ Thay cho chế độ Ghi sheet cũ (sheet `data_don` giữ nguyên, không còn 
 | Đơn FAILED đã quét | "Đã quét" |
 | Đơn của chuyến nhưng không FAILED | "Không cần kiểm" |
 | Đơn không thuộc chuyến | "Không thuộc chuyến" |
+
+- Dưới ô kết quả có hai khung cập nhật sau mỗi lần quét: **Còn thiếu (y)** — mã đơn FAILED chưa quét, và **Đã quét (x)** — mã đơn FAILED đã quét lại (theo thứ tự trong chuyến).
 
 - Bấm **Kết thúc chuyến** → xác nhận (còn thiếu thì hỏi "Còn thiếu N đơn FAILED chưa quét. Vẫn kết thúc?") → mọi dòng của chuyến được ghi `ket_thuc` (giờ kết thúc); đơn FAILED ghi `ban_kiem` = `Đã kiểm` hoặc `Thiếu`. Danh sách hiện "Đã kết thúc 21:00 · thiếu 1", **Xem đơn** liệt kê đơn thiếu.
 - **Quay lại** giữ tiến độ trên máy; dòng chuyến hiện **Tiếp tục kiểm 1/2**.
