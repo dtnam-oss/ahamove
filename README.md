@@ -5,7 +5,7 @@ Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong
 **Mở công cụ:** https://dtnam-oss.github.io/ahamove/
 
 - Giao diện: trang tĩnh trên GitHub Pages (`web/`).
-- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `POST {action:'dongkiem'|'trahang'}` ghi sheet `data_dong_kiem` / `tra_hang`.
+- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `GET ?action=pendingpu` đọc danh sách chờ lấy cho Đồng kiểm; `POST {action:'dongkiem'|'trahang'}` ghi sheet `data_dong_kiem` / `tra_hang`.
 
 Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
@@ -73,16 +73,25 @@ Ai có URL API đều xem và tạo được chuyến (giống các chế độ 
 
 ## Chế độ Đồng kiểm
 
-Bấm **Đồng kiểm** → chọn **Ngày nhận đơn** (mặc định hôm nay) và **Kho nhận** (Thuận Thành / Yên Phong) → **Bắt đầu quét** → quét đơn → **Kết thúc**.
+Bấm **Đồng kiểm** → trang tải danh sách chờ lấy (sheet `export_raw_pending_pu`) → chọn **Ngày nhận đơn** (mặc định hôm nay) và **Kho nhận** (Thuận Thành / Yên Phong) → **Bắt đầu quét** → quét đơn → **Kết thúc**.
 
-- Đơn hợp lệ: đúng **8 ký tự chữ/số liền nhau** (vd `GYE7WB4C`; mã toàn chữ như `GYEFAPQW` cũng hợp lệ). Khoảng trắng đầu/cuối được bỏ, chữ thường đổi thành hoa. Hợp lệ → "Có"; sai định dạng → "Không"; quét lại trong lượt → "Đã quét". Không tra `raw_data`.
-- Lượt đang quét được lưu trên máy. **Kết thúc** gửi cả lượt lên một lần, ghi sheet `data_dong_kiem` (tự tạo): mỗi đơn một dòng `ngay_nhan | kho_nhan | tracking_number | thoi_gian`, dạng text. Cột được tìm theo tên tiêu đề — sheet tự tạo trước với thứ tự cột khác vẫn ghi đúng, cột thiếu được thêm vào cuối.
+- Danh sách chờ lấy nằm ở file khác (ID trong `PENDING_PU_SHEET_ID`, `gas/config.js`), chỉ đọc; chỉ `tracking_number` và `wh_pickup` được gửi về trang. Mỗi lần mở tab Đồng kiểm danh sách được tải lại.
+
+| Khi quét | Giọng đọc |
+|---|---|
+| Có trong danh sách, đúng kho đang chọn | "Có", bộ đếm `đã quét/tổng đơn chờ lấy của kho` tăng |
+| Có trong danh sách nhưng thuộc kho khác | "Không, kho `<kho của đơn>`" |
+| Không có trong danh sách | "Không" |
+| Đã quét trong lượt | "Đã quét" |
+| Danh sách chưa tải được | "Chưa tải danh sách" (mở lại tab để tải lại) |
+
+- Lượt đang quét được lưu trên máy. **Kết thúc** gửi cả lượt (chỉ đơn "Có") lên một lần, ghi sheet `data_dong_kiem` (tự tạo): mỗi đơn một dòng `ngay | kho | ma_don | thoi_gian`, dạng text. Cột được tìm theo tên tiêu đề — sheet tự tạo trước với thứ tự cột khác vẫn ghi đúng, cột thiếu được thêm vào cuối.
 
 ## Chế độ Trả hàng
 
 Giống Đồng kiểm: bấm **Trả hàng** → chọn **Ngày trả** (mặc định hôm nay) và **Kho trả** (Thuận Thành / Yên Phong) → **Bắt đầu quét** → quét đơn → **Kết thúc**.
 
-- Cùng quy tắc mã (8 ký tự chữ/số liền nhau) và kiểm trùng trong lượt: "Có" / "Không" / "Đã quét".
+- Đơn hợp lệ: đúng **8 ký tự chữ/số liền nhau** (vd `GYE7WB4C`; mã toàn chữ như `GYEFAPQW` cũng hợp lệ), không tra danh sách nào. Khoảng trắng đầu/cuối được bỏ, chữ thường đổi thành hoa. Hợp lệ → "Có"; sai định dạng → "Không"; quét lại trong lượt → "Đã quét".
 - Ghi sheet `tra_hang` (tự tạo): mỗi đơn một dòng `ngay_tra | kho_tra | tracking_number | thoi_gian`, cột tìm theo tên tiêu đề.
 - Lượt Trả hàng và lượt Đồng kiểm được giữ riêng trên máy — đang dở lượt này vẫn chuyển sang chế độ kia được.
 
@@ -166,7 +175,7 @@ gas/                  backend Apps Script
   goong.js            gọi Goong geocode (kiểm tra đúng quận/huyện)
   locate.js           ?action=locate&code=: toạ độ một đơn cho bản đồ (cache toa_do_don)
   trips.js            createTrip / endTrip / listTrips / openTrips: chuyến đi ở sheet chuyen_di
-  scan-rounds.js      saveDongKiem / saveTraHang: đơn nhận / trả theo ngày + kho ở sheet data_dong_kiem / tra_hang
+  scan-rounds.js      pendingPu (?action=pendingpu) / saveDongKiem / saveTraHang: danh sách chờ lấy; đơn nhận / trả ở sheet data_dong_kiem / tra_hang
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages
@@ -177,7 +186,7 @@ test/lookup.test.js   test logic tra cứu + backend
 Yêu cầu: Node ≥ 20, [`clasp`](https://github.com/google/clasp) đã đăng nhập, bật Apps Script API tại https://script.google.com/home/usersettings.
 
 ```bash
-cp gas/config.example.js gas/config.js   # điền SHEET_ID
+cp gas/config.example.js gas/config.js   # điền SHEET_ID, PENDING_PU_SHEET_ID
 npm test                                 # chạy test
 clasp push --force                       # đẩy code lên Apps Script
 clasp update-deployment <DEPLOYMENT_ID>  # cập nhật backend, giữ nguyên URL

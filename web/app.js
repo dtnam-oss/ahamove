@@ -47,6 +47,7 @@
     dkSetup: $('dk-setup'),
     dkDay: $('dk-day'),
     dkDayLabel: $('dk-day-label'),
+    dkSource: $('dk-source'),
     dkKhoLegend: $('dk-kho-legend'),
     dkHint: $('dk-hint'),
     dkProgress: $('dk-progress'),
@@ -874,6 +875,9 @@
   var dk = null; // rounds[dkKind]
   var dkIn = {};
   var dkSaving = false;
+  // Đồng kiểm checks scans against the pending pick-up list (code -> warehouse), reloaded each time the tab opens.
+  var pending = null;
+  var pendingLoad = 0; // id of the latest load, so a slow older answer cannot overwrite a newer one
 
   function isRoundMode(m) { return Object.prototype.hasOwnProperty.call(ROUND_KINDS, m); }
 
@@ -904,6 +908,7 @@
   function leaveDkScreens() {
     els.dkSetup.hidden = true;
     els.dkProgress.hidden = true;
+    els.dkSource.hidden = true;
   }
 
   function showDkScreen(kind) {
@@ -911,7 +916,30 @@
     var k = ROUND_KINDS[kind];
     els.dkDayLabel.textContent = k.dayLabel;
     els.dkKhoLegend.textContent = k.khoLabel;
+    els.dkSource.hidden = kind !== 'dongkiem';
+    if (kind === 'dongkiem') loadPending();
     if (dk) enterDkScan(); else showDkSetup();
+  }
+
+  /** Load sheet export_raw_pending_pu (only code + pick-up warehouse). */
+  function loadPending() {
+    var id = ++pendingLoad;
+    els.dkSource.textContent = 'Đang tải danh sách chờ lấy (export_raw_pending_pu)…';
+    apiGet('?action=pendingpu&t=' + Date.now())
+      .then(function (body) {
+        if (id !== pendingLoad) return;
+        pending = body.orders || {};
+        els.dkSource.textContent = 'Danh sách chờ lấy: ' + body.count + ' đơn · cập nhật ' +
+          new Date(body.updatedAt).toLocaleTimeString('vi-VN');
+      })
+      .catch(function (err) {
+        if (id !== pendingLoad) return;
+        els.dkSource.textContent = 'Lỗi tải danh sách chờ lấy: ' + errorText(err) +
+          (pending ? ' — đang dùng danh sách tải trước đó' : ' — mở lại tab Đồng kiểm để thử lại');
+      })
+      .then(function () {
+        if (id === pendingLoad && dkKind === 'dongkiem' && dk && !els.dkProgress.hidden) updateDkCount();
+      });
   }
 
   function showDkSetup(message) {
@@ -948,21 +976,40 @@
     focusInput();
   }
 
+  /** "x/total đơn" for Đồng kiểm once the pending list is loaded, otherwise "x đơn". */
+  function dkCountText() {
+    if (dkKind === 'dongkiem' && pending) return dk.codes.length + '/' + Lookup.pendingTotal(pending, dk.kho, dk.codes) + ' đơn';
+    return dk.codes.length + ' đơn';
+  }
+
   function updateDkCount() {
-    els.dkCount.textContent = dk.codes.length + ' đơn';
+    els.dkCount.textContent = dkCountText();
     els.dkFinish.disabled = dkSaving || !dk.codes.length;
   }
 
   function handleDkScan(raw) {
     if (!dk || els.dkProgress.hidden) return; // day and warehouse not chosen yet
-    var r = Lookup.resolveDongKiemScan(raw, dkIn); // same code rule for both modes
+    var r;
+    if (dkKind === 'dongkiem') {
+      if (!pending) {
+        if (!Lookup.normalizeCode(raw)) return;
+        showResult('error', 'Chưa tải danh sách', els.dkSource.textContent);
+        speak('Chưa tải danh sách');
+        return;
+      }
+      r = Lookup.resolveDongKiemPending(raw, pending, dk.kho, dkIn);
+    } else {
+      r = Lookup.resolveDongKiemScan(raw, dkIn); // Trả hàng: code format only
+    }
     if (r.status === 'empty') return;
     if (r.status === 'ok') {
       dk.codes.push(r.code);
       setDk(dk);
       updateDkCount();
-      showResult('ok', 'Có', dk.codes.length + ' đơn · kho ' + dk.kho, r.code);
+      showResult('ok', 'Có', dkCountText() + ' · kho ' + dk.kho, r.code);
     } else if (r.status === 'duplicate') showResult('unmapped', 'Đã quét', 'Đơn đã có trong lượt này', r.code);
+    else if (r.status === 'wrong_kho') showResult('not_found', 'Không', 'Đơn của kho ' + r.kho, r.code);
+    else if (r.status === 'not_found') showResult('not_found', 'Không', 'Không có trong danh sách chờ lấy', r.input);
     else showResult('not_found', 'Không', 'Mã không hợp lệ (cần 8 ký tự chữ/số liền nhau)', r.input);
     speak(r.speech);
   }

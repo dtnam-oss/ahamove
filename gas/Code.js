@@ -2,7 +2,8 @@
 // GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config.
 // GET ?action=locate&code=X returns the map point of one order (see locate.js).
 // GET ?action=trips&day=dd/MM/yyyy / ?action=opentrips and POST {action:'trip'|'endTrip'} manage trips (see trips.js).
-// POST {action:'dongkiem'|'trahang', ngay, kho, codes} saves a round of received / returned orders (see scan-rounds.js).
+// GET ?action=pendingpu lists pending pick-up orders per warehouse for Đồng kiểm; POST {action:'dongkiem'|'trahang',
+// ngay, kho, codes} saves a round of received / returned orders (see scan-rounds.js).
 // Customer PII (name, phone, address) never leaves the sheet.
 //
 // The UI is hosted outside Apps Script (GitHub Pages, see web/) because the Apps Script
@@ -21,6 +22,7 @@ function doGet(e) {
   if (action === 'locate') return jsonOutput_(safely_(function () { return locateOrder(e.parameter.code); }));
   if (action === 'trips') return jsonOutput_(safely_(function () { return listTrips(e.parameter.day); }));
   if (action === 'opentrips') return jsonOutput_(safely_(openTrips));
+  if (action === 'pendingpu') return jsonOutput_(safely_(pendingPu));
 
   // Old links to this web app: point users to the hosted UI (top navigation needs a user click).
   return HtmlService.createHtmlOutput(

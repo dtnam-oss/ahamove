@@ -107,7 +107,8 @@ function loadServer(tables, geo = {}) {
   const ctx = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, UrlFetchApp, Utilities, console, geocoded,
   });
-  vm.runInContext(read('gas/config.example.js').replace("GOONG_API_KEY = ''", "GOONG_API_KEY = 'test-key'"), ctx);
+  vm.runInContext(read('gas/config.example.js').replace("GOONG_API_KEY = ''", "GOONG_API_KEY = 'test-key'")
+    .replace("'YOUR_PENDING_PU_SHEET_ID'", "'test-pending-pu'"), ctx);
   vm.runInContext(read('gas/Code.js'), ctx);
   vm.runInContext(read('gas/routes.js'), ctx);
   vm.runInContext(read('gas/goong.js'), ctx);
@@ -834,17 +835,17 @@ test('saveDongKiem appends one text row per order; columns found by header, miss
   assert.equal(r.ok, true);
   assert.equal(r.count, 2);
   assert.deepEqual(plain(tables.data_dong_kiem), [
-    ['ngay_nhan', 'kho_nhan', 'tracking_number', 'thoi_gian'],
+    ['ngay', 'kho', 'ma_don', 'thoi_gian'],
     ['18/11/2026', 'Yên Phong', 'GYE7WB4C', r.thoi_gian],
     ['18/11/2026', 'Yên Phong', 'GYEFAPQW', r.thoi_gian],
   ]);
 
   // A sheet made by hand: other column order, an extra column, thoi_gian missing.
-  const own = [['tracking_number', 'ghi_chu', 'kho_nhan', 'ngay_nhan'], ['OLD00001', 'x', 'Thuận Thành', '17/11/2026']];
+  const own = [['ma_don', 'ghi_chu', 'kho', 'ngay'], ['OLD00001', 'x', 'Thuận Thành', '17/11/2026']];
   const s2 = loadServer({ raw_data: DATA, config: CONFIG, data_dong_kiem: own });
   const r2 = s2.saveDongKiem('18/11/2026', 'Thuận Thành', ['GYE7WB4C']);
   assert.deepEqual(plain(own), [
-    ['tracking_number', 'ghi_chu', 'kho_nhan', 'ngay_nhan', 'thoi_gian'],
+    ['ma_don', 'ghi_chu', 'kho', 'ngay', 'thoi_gian'],
     ['OLD00001', 'x', 'Thuận Thành', '17/11/2026'],
     ['GYE7WB4C', '', 'Thuận Thành', '18/11/2026', r2.thoi_gian],
   ]);
@@ -884,4 +885,47 @@ test('saveTraHang writes sheet tra_hang with its own day/warehouse columns; data
   assert.equal(post({ action: 'trahang', ngay: '19/11/2026', kho: 'Yên Phong', codes: ['GYE7WB4C'] }).count, 1);
   assert.equal(plain(tables.tra_hang).length, 4);
   assert.match(post({ action: 'trahang', ngay: '19/11/2026', kho: 'x', codes: ['GYE7WB4C'] }).error, /Kho trả/);
+});
+
+// Mirrors sheet export_raw_pending_pu (another spreadsheet); item must never reach the payload.
+const PENDING_PU = [
+  ['tracking_number', 'request_time', 'partner', 'status', 'wh_pickup', 'item'],
+  ['GYE7M8RP', '2026-11-07 16:14:09', 'ghnbulky', 'VERIFYING', 'Thuận Thành', 'Nước xả vải'],
+  [' gyegu8fu ', '2026-11-08 0:14:59', 'ghnbulky', 'VERIFYING', ' Yên Phong ', 'Sữa'],
+  ['', '', '', '', 'Yên Phong', ''],
+  ['GYE3H3BC', '2026-11-15 19:49:08', 'ghnbulky', 'VERIFYING', '', 'Sữa'],
+];
+
+test('pendingPu returns code -> pick-up warehouse only; endpoint ?action=pendingpu', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG, export_raw_pending_pu: PENDING_PU });
+  const r = plain(server.pendingPu());
+  assert.deepEqual(r.orders, { GYE7M8RP: 'Thuận Thành', GYEGU8FU: 'Yên Phong' });
+  assert.equal(r.count, 2);
+  assert.ok(!JSON.stringify(r).includes('Sữa') && !JSON.stringify(r).includes('VERIFYING'));
+  const get = JSON.parse(server.doGet({ parameter: { action: 'pendingpu' } }).text);
+  assert.equal(get.count, 2);
+
+  const missing = loadServer({ raw_data: DATA, config: CONFIG });
+  assert.match(JSON.parse(missing.doGet({ parameter: { action: 'pendingpu' } }).text).error, /Không tìm thấy sheet export_raw_pending_pu/);
+  const noCol = loadServer({ raw_data: DATA, config: CONFIG, export_raw_pending_pu: [['tracking_number', 'kho']] });
+  assert.throws(() => noCol.pendingPu(), /thiếu cột tracking_number hoặc wh_pickup/);
+});
+
+test('đồng kiểm scan against the pending list: right warehouse "Có", other warehouse names it, unknown "Không"', () => {
+  const Lookup = loadLookup();
+  const pending = { GYE7M8RP: 'Thuận Thành', GYEGU8FU: 'Yên Phong' };
+  const ok = Lookup.resolveDongKiemPending(' gye7m8rp ', pending, 'Thuận Thành', {});
+  assert.deepEqual([ok.status, ok.code, ok.speech], ['ok', 'GYE7M8RP', 'Có']);
+  const wrong = Lookup.resolveDongKiemPending('GYEGU8FU', pending, 'Thuận Thành', {});
+  assert.deepEqual([wrong.status, wrong.kho, wrong.speech], ['wrong_kho', 'Yên Phong', 'Không, kho Yên Phong']);
+  const unknown = Lookup.resolveDongKiemPending('GYE7WB4C', pending, 'Thuận Thành', {});
+  assert.deepEqual([unknown.status, unknown.speech], ['not_found', 'Không']);
+  assert.equal(Lookup.resolveDongKiemPending('constructor', pending, 'Thuận Thành', {}).status, 'not_found');
+  assert.equal(Lookup.resolveDongKiemPending('GYE7M8RP', pending, 'Thuận Thành', { GYE7M8RP: true }).speech, 'Đã quét');
+  assert.equal(Lookup.resolveDongKiemPending(' ', pending, 'Thuận Thành', {}).status, 'empty');
+
+  // Total = pending orders of the warehouse + scanned ones that have since left the list.
+  assert.equal(Lookup.pendingTotal(pending, 'Thuận Thành', []), 1);
+  assert.equal(Lookup.pendingTotal(pending, 'Thuận Thành', ['GYE7M8RP', 'GYEOLD01']), 2);
+  assert.equal(Lookup.pendingTotal(pending, 'Yên Phong', ['GYEGU8FU']), 1);
 });

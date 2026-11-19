@@ -1,6 +1,7 @@
 // Scan rounds by day + warehouse: orders scanned on the device and saved once when the user finishes.
 //   "Đồng kiểm" (received orders): POST {action:'dongkiem', ngay, kho, codes} -> sheet data_dong_kiem
 //   "Trả hàng" (returned orders):  POST {action:'trahang',  ngay, kho, codes} -> sheet tra_hang
+// Đồng kiểm checks each scan against the pending pick-up list: GET ?action=pendingpu -> pendingPu().
 // Each sheet gets one row per order; its columns are found by header name, so a sheet made by hand
 // with other columns (or another order) keeps working; missing headers are added at the end.
 
@@ -8,9 +9,12 @@ const SCAN_ROUND_WAREHOUSES = ['Thuận Thành', 'Yên Phong'];
 const SCAN_ROUND_CODE = /^[A-Z0-9]{8}$/; // a waybill code: 8 letters/digits, e.g. GYE7WB4C
 const SCAN_ROUND_MAX_CODES = 5000;
 
-// Per kind: sheet name, its day and warehouse column headers, and the words used in error messages.
-const DONG_KIEM = { sheet: 'data_dong_kiem', dayCol: 'ngay_nhan', khoCol: 'kho_nhan', dayName: 'Ngày nhận', khoName: 'Kho nhận' };
-const TRA_HANG = { sheet: 'tra_hang', dayCol: 'ngay_tra', khoCol: 'kho_tra', dayName: 'Ngày trả', khoName: 'Kho trả' };
+// Per kind: sheet name, its day / warehouse / code column headers, and the words used in error messages.
+const DONG_KIEM = { sheet: 'data_dong_kiem', dayCol: 'ngay', khoCol: 'kho', codeCol: 'ma_don', dayName: 'Ngày nhận', khoName: 'Kho nhận' };
+const TRA_HANG = { sheet: 'tra_hang', dayCol: 'ngay_tra', khoCol: 'kho_tra', codeCol: 'tracking_number', dayName: 'Ngày trả', khoName: 'Kho trả' };
+
+// Orders waiting for pick-up, in another spreadsheet (PENDING_PU_SHEET_ID, config.js), read only.
+const PENDING_PU_SHEET = 'export_raw_pending_pu';
 
 /** Column (1-based) of each header name, adding the missing headers after the last column. */
 function scanRoundColumns_(sheet, header) {
@@ -54,13 +58,13 @@ function saveScanRound_(kind, ngay, kho, codes) {
       sheet = ss.insertSheet(kind.sheet);
       sheet.setFrozenRows(1);
     }
-    const layout = scanRoundColumns_(sheet, [kind.dayCol, kind.khoCol, 'tracking_number', 'thoi_gian']);
+    const layout = scanRoundColumns_(sheet, [kind.dayCol, kind.khoCol, kind.codeCol, 'thoi_gian']);
     const time = tripNow_().time; // trips.js
     const values = list.map(function (code) {
       const row = new Array(layout.width).fill('');
       row[layout.col[kind.dayCol] - 1] = day;
       row[layout.col[kind.khoCol] - 1] = warehouse;
-      row[layout.col.tracking_number - 1] = code;
+      row[layout.col[kind.codeCol] - 1] = code;
       row[layout.col.thoi_gian - 1] = time;
       return row;
     });
@@ -71,6 +75,31 @@ function saveScanRound_(kind, ngay, kho, codes) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Pending pick-up orders for "Đồng kiểm": {orders: {CODE: warehouse}, count, updatedAt}.
+ * Only the code and its pick-up warehouse (wh_pickup) leave the sheet.
+ */
+function pendingPu() {
+  if (!PENDING_PU_SHEET_ID || PENDING_PU_SHEET_ID === 'YOUR_PENDING_PU_SHEET_ID') throw new Error('Chưa cấu hình PENDING_PU_SHEET_ID');
+  const sheet = SpreadsheetApp.openById(PENDING_PU_SHEET_ID).getSheetByName(PENDING_PU_SHEET);
+  if (!sheet) throw new Error('Không tìm thấy sheet ' + PENDING_PU_SHEET);
+  const values = sheet.getDataRange().getDisplayValues();
+  const head = (values[0] || []).map(function (h) { return String(h).trim().toLowerCase(); });
+  const codeAt = head.indexOf('tracking_number');
+  const khoAt = head.indexOf('wh_pickup');
+  if (codeAt < 0 || khoAt < 0) throw new Error('Sheet ' + PENDING_PU_SHEET + ' thiếu cột tracking_number hoặc wh_pickup');
+  const orders = {};
+  let count = 0;
+  for (let i = 1; i < values.length; i++) {
+    const code = String(values[i][codeAt]).trim().toUpperCase();
+    const kho = String(values[i][khoAt]).trim();
+    if (!code || !kho) continue;
+    if (!orders[code]) count++;
+    orders[code] = kho;
+  }
+  return { orders: orders, count: count, updatedAt: new Date().toISOString() };
 }
 
 /** "Đồng kiểm": orders received at a warehouse on a receiving day. */

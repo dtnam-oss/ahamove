@@ -274,6 +274,28 @@ var Lookup = (function () {
     return { status: 'ok', code: code, speech: 'Có' };
   }
 
+  /**
+   * "Đồng kiểm" scan against the pending pick-up list (code -> warehouse) for the chosen warehouse:
+   * ok "Có" | duplicate "Đã quét" | wrong_kho "Không, kho <its warehouse>" | not_found "Không".
+   */
+  function resolveDongKiemPending(raw, pending, kho, scanned) {
+    var code = normalizeCode(raw);
+    if (!code) return { status: 'empty', speech: '' };
+    if (scanned[code]) return { status: 'duplicate', code: code, speech: 'Đã quét' };
+    var at = Object.prototype.hasOwnProperty.call(pending, code) ? pending[code] : '';
+    if (!at) return { status: 'not_found', input: code, speech: 'Không' };
+    if (at !== kho) return { status: 'wrong_kho', code: code, kho: at, speech: 'Không, kho ' + at };
+    return { status: 'ok', code: code, speech: 'Có' };
+  }
+
+  /** Pending orders of a warehouse plus scanned codes no longer pending: the "x/total" total. */
+  function pendingTotal(pending, kho, scanned) {
+    var total = 0;
+    Object.keys(pending).forEach(function (c) { if (pending[c] === kho) total++; });
+    scanned.forEach(function (c) { if (pending[c] !== kho) total++; });
+    return total;
+  }
+
   /** Ward points of a route (for the map); [] when unknown. */
   function routeWardPoints(routeName, index) {
     return (index.routePoints && index.routePoints.get(routeName)) || [];
@@ -297,5 +319,7 @@ var Lookup = (function () {
     tripFailedCodes: tripFailedCodes,
     resolveTripCheck: resolveTripCheck,
     resolveDongKiemScan: resolveDongKiemScan,
+    resolveDongKiemPending: resolveDongKiemPending,
+    pendingTotal: pendingTotal,
   };
 })();
