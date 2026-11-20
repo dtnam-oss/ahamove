@@ -44,6 +44,13 @@ var Lookup = (function () {
         backlog.set(normalizeCode(code), payload.backlog[code]);
       });
     }
+    var returns = null; // order code -> {kho, trang_thai} from sheet return
+    if (payload.returns) {
+      returns = new Map();
+      Object.keys(payload.returns).forEach(function (code) {
+        returns.set(normalizeCode(code), payload.returns[code]);
+      });
+    }
     var routes = null; // ward key -> ten_tuyen
     var routeRows = []; // config_tuyen rows actually used (first row per ward)
     var routePoints = new Map(); // ten_tuyen -> ward points of that route, for the map
@@ -66,7 +73,7 @@ var Lookup = (function () {
       });
     }
     return {
-      orders: orders, areas: areas, backlog: backlog,
+      orders: orders, areas: areas, backlog: backlog, returns: returns,
       routes: routes, routeRows: routeRows, routePoints: routePoints, orderRoute: orderRoute,
     };
   }
@@ -123,6 +130,22 @@ var Lookup = (function () {
     if (!days) return { status: 'no_days', code: code, speech: 'Chưa có số ngày còn lại' };
     var overdue = Number(days.replace(',', '.')) < 0;
     return { status: overdue ? 'overdue' : 'ok', code: code, days: days, speech: days + ' ngày' };
+  }
+
+  /**
+   * Hàng hoàn check (sheet return): speak the warehouse and the state, e.g. "Yên Phong, Phân loại".
+   * status: 'empty' | 'unavailable' | 'not_found' | 'no_info' (both columns empty) | 'ok'.
+   */
+  function resolveReturn(raw, index) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    if (!index.returns) return { status: 'unavailable', speech: 'Chưa có dữ liệu hàng hoàn' };
+    var code = findCode(raw, index.returns);
+    if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không có trong hàng hoàn' };
+    var row = index.returns.get(code) || {};
+    var kho = String(row.kho || '').trim();
+    var state = String(row.trang_thai || '').trim();
+    if (!kho && !state) return { status: 'no_info', code: code, speech: 'Chưa có kho và trạng thái' };
+    return { status: 'ok', code: code, kho: kho, trangThai: state, speech: [kho, state].filter(Boolean).join(', ') };
   }
 
   /** "Tuyến 2" before "Tuyến 10": compare by the trailing number, then by text. */
@@ -324,6 +347,7 @@ var Lookup = (function () {
     findCode: findCode,
     resolveScan: resolveScan,
     resolveBacklog: resolveBacklog,
+    resolveReturn: resolveReturn,
     routeSummary: routeSummary,
     routeOrderCodes: routeOrderCodes,
     resolveRouteCheck: resolveRouteCheck,

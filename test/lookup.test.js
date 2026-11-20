@@ -302,6 +302,48 @@ test('backlog: not listed, empty days, QR payload, no back_log data', () => {
   assert.equal(Lookup.resolveBacklog('GYEGFF9C', noBacklog).status, 'unavailable');
 });
 
+// ---------- Hàng hoàn mode: sheet return ----------
+
+const RETURNS = [
+  ['ma_don', 'kho', 'note', 'trang_thai'],
+  [' gyebm4tc ', 'Yên Phong', 'đơn thao tác fail pickup 3 lần đơn tự hủy', 'Phân loại'],
+  ['GYE9GKRV', 'Thuận Thành', 'đơn cho hoàn bình thường', 'Hoàn hàng'],
+  ['GYE9GKRV', 'Yên Phong', 'dòng trùng', 'Phân loại'],
+  ['GYENOKHO', '', 'ghi chú', ''],
+  ['', 'Yên Phong', '', 'Phân loại'],
+];
+
+test('server payload carries sheet return as code -> kho + trang_thai only (first row wins)', () => {
+  const payload = loadServer({ raw_data: DATA, config: CONFIG, return: RETURNS }).getLookupData();
+  assert.deepEqual(JSON.parse(JSON.stringify(payload.returns)), {
+    GYEBM4TC: { kho: 'Yên Phong', trang_thai: 'Phân loại' },
+    GYE9GKRV: { kho: 'Thuận Thành', trang_thai: 'Hoàn hàng' },
+    GYENOKHO: { kho: '', trang_thai: '' },
+  });
+  assert.equal(payload.returnsError, '');
+  assert.ok(!JSON.stringify(payload.returns).includes('ghi chú'), 'note stays in the sheet');
+  const noSheet = loadServer({ raw_data: DATA, config: CONFIG }).getLookupData();
+  assert.equal(noSheet.returns, null);
+  assert.match(noSheet.returnsError, /Không tìm thấy sheet "return"/);
+  assert.equal(noSheet.orderCount, 6);
+  const noCol = loadServer({ raw_data: DATA, config: CONFIG, return: [['ma_don', 'kho']] }).getLookupData();
+  assert.match(noCol.returnsError, /thiếu cột trang_thai/);
+});
+
+test('hàng hoàn scan speaks the warehouse and the state', () => {
+  const Lookup = loadLookup();
+  const index = Lookup.buildIndex(loadServer({ raw_data: DATA, config: CONFIG, return: RETURNS }).getLookupData());
+  const ok = Lookup.resolveReturn(' gyebm4tc ', index);
+  assert.deepEqual([ok.status, ok.code, ok.kho, ok.trangThai, ok.speech], ['ok', 'GYEBM4TC', 'Yên Phong', 'Phân loại', 'Yên Phong, Phân loại']);
+  assert.equal(Lookup.resolveReturn('https://x.vn/t?code=GYE9GKRV', index).speech, 'Thuận Thành, Hoàn hàng');
+  const nf = Lookup.resolveReturn('GYEGFF9C', index); // in raw_data, not in sheet return
+  assert.deepEqual([nf.status, nf.input, nf.speech], ['not_found', 'GYEGFF9C', 'Không có trong hàng hoàn']);
+  assert.equal(Lookup.resolveReturn('GYENOKHO', index).status, 'no_info');
+  assert.equal(Lookup.resolveReturn('  ', index).status, 'empty');
+  const noReturns = Lookup.buildIndex({ orders: {}, config: [], returns: null });
+  assert.equal(Lookup.resolveReturn('GYEBM4TC', noReturns).speech, 'Chưa có dữ liệu hàng hoàn');
+});
+
 // ---------- Route mode: sheet config_tuyen (wards grouped into routes) ----------
 
 const ROUTES = [

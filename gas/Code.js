@@ -1,5 +1,6 @@
 // Backend of the order-sorting tool (Google Apps Script web app).
-// GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config.
+// GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config,
+// plus the back_log days and the returned orders (sheet return: warehouse + state).
 // GET ?action=locate&code=X returns the map point of one order (see locate.js).
 // GET ?action=trips&day=dd/MM/yyyy / ?action=opentrips and POST {action:'trip'|'endTrip'} manage trips (see trips.js).
 // GET ?action=pendingpu lists pending pick-up orders per warehouse for Đồng kiểm; POST {action:'dongkiem'|'trahang',
@@ -14,6 +15,7 @@ const DATA_SHEET = 'raw_data'; // order source (columns found by header name)
 const CONFIG_SHEET = 'config';
 const BACKLOG_SHEET = 'back_log';
 const BACKLOG_DAYS_COLUMN = 'Còn lại (ngày), âm là quá hạn'; // days left to the deadline, negative = overdue
+const RETURN_SHEET = 'return'; // returned orders: ma_don | kho | note | trang_thai (note stays in the sheet)
 const APP_URL = 'https://dtnam-oss.github.io/ahamove/';
 
 function doGet(e) {
@@ -101,6 +103,7 @@ function getLookupData() {
   });
 
   const backlog = readBacklog_(ss);
+  const returns = readReturns_(ss);
   const routes = readRoutes_(ss); // see routes.js
 
   return {
@@ -110,6 +113,8 @@ function getLookupData() {
     config: config,
     backlog: backlog.days, // code -> days left (display string), or null when back_log is unreadable
     backlogError: backlog.error,
+    returns: returns.orders, // code -> {kho, trang_thai} from sheet return, or null when it is unreadable
+    returnsError: returns.error,
     routes: routes.routes, // [{ten_tuyen, phuong_xa, quan_huyen}] from config_tuyen, or null when unreadable
     routesError: routes.error,
   };
@@ -127,6 +132,23 @@ function readBacklog_(ss) {
     return { days: days, error: '' };
   } catch (err) {
     return { days: null, error: String((err && err.message) || err) };
+  }
+}
+
+/** Sheet return feeds the Hàng hoàn mode only: like back_log, a problem there never breaks the main payload. */
+function readReturns_(ss) {
+  try {
+    const table = readTable_(ss, RETURN_SHEET, ['ma_don', 'kho', 'trang_thai']);
+    const orders = {};
+    table.rows.forEach(function (r) {
+      const code = String(r[table.col.ma_don]).trim().toUpperCase();
+      if (code && !(code in orders)) { // first row wins
+        orders[code] = { kho: String(r[table.col.kho]).trim(), trang_thai: String(r[table.col.trang_thai]).trim() };
+      }
+    });
+    return { orders: orders, error: '' };
+  } catch (err) {
+    return { orders: null, error: String((err && err.message) || err) };
   }
 }
 

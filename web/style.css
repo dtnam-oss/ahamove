@@ -59,8 +59,8 @@ html, body {
   font-size: 0.9rem;
 }
 
-.mode-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; } /* phones: 2 rows (4 + 3) */
-@media (min-width: 560px) { .mode-bar { grid-template-columns: repeat(7, 1fr); } }
+.mode-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; } /* phones: 2 rows of 4 */
+@media (min-width: 560px) { .mode-bar { grid-template-columns: repeat(8, 1fr); } }
 .mode-btn { padding-left: 4px; padding-right: 4px; font-size: 0.85rem; }
 .mode-btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
 

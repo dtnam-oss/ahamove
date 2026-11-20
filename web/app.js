@@ -3,6 +3,7 @@
 // chuyen_di once it is finished, list/copy the trips of a day, end a trip after scanning back its FAILED orders)
 // "Đồng kiểm" mode (receiving day + warehouse, scan the received orders, save them to sheet data_dong_kiem)
 // "Backlog" mode (speak the days left to the deadline from sheet back_log)
+// "Hàng hoàn" mode (speak the warehouse and the state of a returned order from sheet return)
 // "Chia tuyến" mode (speak the order's route from sheet config_tuyen, like "Chia chọn" does for areas)
 // and "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck).
 (function () {
@@ -81,7 +82,7 @@
 
   // 'sort' = sorting location | 'routesort' = route | 'trip' = load/end a trip | 'dongkiem' = received orders
   // | 'trahang' = returned orders
-  // | 'backlog' = days left | 'route' = route check
+  // | 'backlog' = days left | 'route' = route check | 'return' = returned order warehouse + state
   var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
@@ -156,7 +157,8 @@
         var time = new Date(body.updatedAt).toLocaleTimeString('vi-VN');
         var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
         var routeInfo = body.routes ? countRoutes(body.routes) + ' tuyến' : 'tuyến lỗi: ' + body.routesError;
-        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · cập nhật ' + time;
+        var returnInfo = body.returns ? Object.keys(body.returns).length + ' hàng hoàn' : 'hàng hoàn lỗi: ' + body.returnsError;
+        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · ' + returnInfo + ' · cập nhật ' + time;
         if (mode === 'route') showRouteScreen(); // totals follow the reloaded raw_data
         if (mode === 'trip' && !els.tripHome.hidden) loadTripList();
       })
@@ -185,6 +187,7 @@
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     if (mode === 'trip') { if (check && !els.checkProgress.hidden) handleCheckScan(raw); else handleTripScan(raw); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
+    if (mode === 'return') { handleReturn(raw); return; }
     if (mode === 'route') { handleRouteScan(raw); return; }
     if (mode === 'routesort') { handleRouteSort(raw); return; }
     var r = Lookup.resolveScan(raw, index);
@@ -208,7 +211,7 @@
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
     if (mode === 'trip') { showTripScreen(); return; }
     if (isRoundMode(mode)) { showDkScreen(mode); return; }
-    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến' };
+    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến', 'return': 'Chế độ kiểm tra hàng hoàn' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     focusInput();
   }
@@ -225,6 +228,17 @@
     else if (r.status === 'no_days') showResult(r.status, 'Chưa có số ngày', 'Cột "Còn lại (ngày)" đang trống', r.code);
     else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu backlog', els.status.textContent);
     else showResult(r.status, 'Không có trong backlog', '', r.input);
+    speak(r.speech);
+  }
+
+  /** Hàng hoàn: the warehouse large, the state (trang_thai) under it. */
+  function handleReturn(raw) {
+    var r = Lookup.resolveReturn(raw, index);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok') showResult(r.status, r.kho || 'Chưa có kho', r.trangThai || 'Chưa có trạng thái', r.code);
+    else if (r.status === 'no_info') showResult('unmapped', 'Chưa có kho và trạng thái', 'Cột kho / trang_thai đang trống', r.code);
+    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu hàng hoàn', els.status.textContent);
+    else showResult(r.status, 'Không có trong hàng hoàn', '', r.input);
     speak(r.speech);
   }
 

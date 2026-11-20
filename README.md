@@ -5,7 +5,7 @@ Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong
 **Mở công cụ:** https://dtnam-oss.github.io/ahamove/
 
 - Giao diện: trang tĩnh trên GitHub Pages (`web/`).
-- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản; `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `GET ?action=pendingpu` đọc danh sách chờ lấy cho Đồng kiểm; `POST {action:'dongkiem'|'trahang'}` ghi sheet `data_dong_kiem` / `tra_hang`.
+- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản (kèm `back_log` và hàng hoàn ở sheet `return`); `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `GET ?action=pendingpu` đọc danh sách chờ lấy cho Đồng kiểm; `POST {action:'dongkiem'|'trahang'}` ghi sheet `data_dong_kiem` / `tra_hang`.
 
 Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
@@ -111,6 +111,19 @@ Bấm **Backlog** rồi quét: tra mã trong sheet `back_log`, cột **"Còn l�
 | Mã không có trong `back_log` | đỏ | "Không có trong backlog" |
 
 `back_log` được tải cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). Cột được tìm theo đúng tên tiêu đề — đổi tên cột thì thanh trạng thái báo "backlog lỗi", các chế độ khác vẫn chạy.
+
+## Chế độ Hàng hoàn
+
+Bấm **Hàng hoàn** rồi quét: tra mã ở cột `ma_don` của sheet `return`, đọc to `<kho>, <trang_thai>` (vd "Yên Phong, Phân loại", "Thuận Thành, Hoàn hàng"). Không ghi gì vào sheet.
+
+| Trường hợp | Màn hình | Giọng đọc |
+|---|---|---|
+| Có trong `return` | xanh: kho (chữ lớn), trạng thái bên dưới | "Yên Phong, Phân loại" |
+| Ô `kho` và `trang_thai` đều trống | cam | "Chưa có kho và trạng thái" |
+| Mã không có trong `return` | đỏ | "Không có trong hàng hoàn" |
+
+- Chỉ `ma_don`, `kho`, `trang_thai` được gửi về trang; cột `note` ở lại sheet. Mã trùng: dòng đầu tiên được dùng.
+- `return` được tải cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). Thiếu sheet hoặc thiếu cột thì thanh trạng thái báo "hàng hoàn lỗi", các chế độ khác vẫn chạy.
 
 ## Chế độ Chia tuyến
 
