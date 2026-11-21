@@ -5,7 +5,7 @@ Công cụ chia chọn đơn: quét mã vận đơn → tra quận/huyện trong
 **Mở công cụ:** https://dtnam-oss.github.io/ahamove/
 
 - Giao diện: trang tĩnh trên GitHub Pages (`web/`).
-- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản (kèm `trang_thai`/`ket_qua` của `raw_data`, `back_log` và hàng hoàn ở sheet `return`); `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `GET ?action=pendingpu` đọc danh sách chờ lấy cho Đồng kiểm; `POST {action:'dongkiem'|'trahang'}` ghi sheet `data_dong_kiem` / `tra_hang`.
+- Backend: Google Apps Script web app (`gas/`): `GET ?action=data` trả JSON tối giản (kèm `trang_thai`/`ket_qua` của `raw_data`, `back_log` và hàng hoàn ở sheet `return`); `GET ?action=trips|opentrips` / `POST {action:'trip'|'endTrip'}` đọc/lưu/kết thúc chuyến đi ở sheet `chuyen_di`; `GET ?action=pendingpu` đọc danh sách chờ lấy cho Đồng kiểm; `POST {action:'dongkiem'|'trahang'|'kiemkho'}` ghi sheet `data_dong_kiem` / `tra_hang` / `kiem_kho`.
 
 Giao diện không chạy bên trong Apps Script vì iframe của Apps Script không cấp quyền `camera`, nên camera trực tiếp bị chặn (`NotAllowedError`).
 
@@ -127,7 +127,7 @@ Bấm **Hàng hoàn** rồi quét: tra mã ở cột `ma_don` của sheet `retur
 
 ## Chế độ Kiểm kho
 
-Bấm **Kiểm kho** rồi quét: tra mã ở cột `tracking_number` của sheet `raw_data`, đọc to `<trang_thai>, <ket_qua>` (vd "Trả hàng, Quá hạn", "Đã nhận, Còn hạn"). Không ghi gì vào sheet.
+Bấm **Kiểm kho** → chọn **ngày kiểm kho** → **Bắt đầu quét**. Mỗi lần quét tra mã ở cột `tracking_number` của sheet `raw_data`, đọc to `<trang_thai>, <ket_qua>` (vd "Trả hàng, Quá hạn", "Đã nhận, Còn hạn") và thêm đơn vào phiên. **Kết thúc** ghi cả phiên một lần vào sheet `kiem_kho`; **Huỷ** bỏ phiên.
 
 | Trường hợp | Màn hình | Giọng đọc |
 |---|---|---|
@@ -135,8 +135,12 @@ Bấm **Kiểm kho** rồi quét: tra mã ở cột `tracking_number` của shee
 | `ket_qua` = "Quá hạn" | đỏ, cùng bố cục | "Trả hàng, Quá hạn" |
 | Một ô trống | ô trống hiện "Chưa có trạng thái" / "Chưa có kết quả" | chỉ đọc ô có giá trị |
 | Cả hai ô trống | cam | "Chưa có trạng thái và kết quả" |
-| Mã không có trong `raw_data` | đỏ | "Không tìm thấy đơn" |
+| Mã không có trong `raw_data` (đúng 8 chữ/số) | đỏ, vẫn thêm vào phiên | "Không tìm thấy đơn" |
+| Mã sai định dạng | đỏ, không thêm | "Mã không hợp lệ" |
+| Mã đã có trong phiên | cam, không thêm lần nữa | "Đã quét" |
 
+- Sheet `kiem_kho` (tự tạo): mỗi đơn một dòng `ngay_kiem | ma_don | trang_thai | ket_qua`, dạng text. `trang_thai`/`ket_qua` được server đọc lại từ `raw_data` lúc ghi; đơn không có trong `raw_data` ghi `trang_thai` = "Không có trong raw_data", `ket_qua` trống. Cột tìm theo tên tiêu đề như Đồng kiểm.
+- Phiên đang quét được lưu trên máy (tải lại trang không mất); ghi lỗi thì phiên vẫn giữ để bấm Kết thúc lại.
 - `trang_thai`, `ket_qua` đi cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). `raw_data` thiếu một trong hai cột thì thanh trạng thái báo "kiểm kho lỗi", các chế độ khác vẫn chạy.
 
 ## Chế độ Chia tuyến
@@ -201,12 +205,12 @@ web/                  giao diện (GitHub Pages, deploy tự động khi push ma
 gas/                  backend Apps Script
   appsscript.json     manifest (chạy bằng quyền người deploy, truy cập ẩn danh)
   Code.js             doGet: ?action=data → JSON; không tham số → link sang giao diện
-                      doPost {action:'trip'|'endTrip'|'dongkiem'}: lưu / kết thúc chuyến, ghi đồng kiểm
+                      doPost {action:'trip'|'endTrip'|'dongkiem'|'trahang'|'kiemkho'}: lưu / kết thúc chuyến, ghi đồng kiểm / trả hàng / kiểm kho
   routes.js           taoCauHinhTuyen / boSungTuyen: gom phường/xã thành tuyến (config_tuyen)
   goong.js            gọi Goong geocode (kiểm tra đúng quận/huyện)
   locate.js           ?action=locate&code=: toạ độ một đơn cho bản đồ (cache toa_do_don)
   trips.js            createTrip / endTrip / listTrips / openTrips: chuyến đi ở sheet chuyen_di
-  scan-rounds.js      pendingPu (?action=pendingpu) / saveDongKiem / saveTraHang: danh sách chờ lấy; đơn nhận / trả ở sheet data_dong_kiem / tra_hang
+  scan-rounds.js      pendingPu (?action=pendingpu) / saveDongKiem / saveTraHang / saveKiemKho: danh sách chờ lấy; đơn nhận / trả / kiểm kho ở sheet data_dong_kiem / tra_hang / kiem_kho
   config.example.js   mẫu config — copy thành config.js (git-ignored)
 test/lookup.test.js   test logic tra cứu + backend
 .github/workflows/pages.yml   test + deploy web/ lên GitHub Pages

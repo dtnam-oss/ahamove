@@ -382,6 +382,50 @@ test('kiểm kho scan speaks trang_thai then ket_qua in Vietnamese', () => {
     ['unavailable', 'Chưa có dữ liệu kiểm kho']);
 });
 
+test('kiểm kho session scan: real codes join (also ones missing from raw_data), junk and repeats do not', () => {
+  const Lookup = loadLookup();
+  const index = Lookup.buildIndex(loadServer({ raw_data: STOCK_DATA, config: CONFIG }).getLookupData());
+  const over = Lookup.resolveStockRound('gyegff9c', index, {});
+  assert.deepEqual([over.status, over.code, over.speech], ['overdue', 'GYEGFF9C', 'Trả hàng, Quá hạn']);
+  const stranger = Lookup.resolveStockRound('ZZZZ9999', index, {});
+  assert.deepEqual([stranger.status, stranger.code, stranger.speech], ['not_found', 'ZZZZ9999', 'Không tìm thấy đơn']);
+  assert.equal(Lookup.resolveStockRound('https://x.vn/t?code=GYEGFFYE', index, {}).code, 'GYEGFFYE');
+  for (const bad of ['GYE7WB4', 'https://x.vn/unknown12', 'GYE7 WB4C']) {
+    assert.deepEqual([Lookup.resolveStockRound(bad, index, {}).status, Lookup.resolveStockRound(bad, index, {}).speech], ['invalid', 'Mã không hợp lệ'], bad);
+  }
+  assert.equal(Lookup.resolveStockRound('GYEGFF9C', index, { GYEGFF9C: true }).status, 'duplicate');
+  assert.equal(Lookup.resolveStockRound('ZZZZ9999', index, { ZZZZ9999: true }).speech, 'Đã quét');
+  assert.equal(Lookup.resolveStockRound(' ', index, {}).status, 'empty');
+  const noCols = Lookup.buildIndex(loadServer({ raw_data: DATA, config: CONFIG }).getLookupData());
+  assert.equal(Lookup.resolveStockRound('GYEGFF9C', noCols, {}).status, 'unavailable');
+});
+
+test('saveKiemKho creates sheet kiem_kho: day, code, state + result from raw_data (not the device)', () => {
+  const tables = { raw_data: STOCK_DATA, config: CONFIG };
+  const server = loadServer(tables);
+  const r = server.saveKiemKho('21/11/2026', ['gyegff9c', 'ZZZZ9999', 'BBBB2222', 'GYEGFF9C', 'AAAA1111']);
+  assert.deepEqual([r.ok, r.count], [true, 4]);
+  assert.deepEqual(plain(tables.kiem_kho), [
+    ['ngay_kiem', 'ma_don', 'trang_thai', 'ket_qua'],
+    ['21/11/2026', 'GYEGFF9C', 'Trả hàng', 'Quá hạn'],
+    ['21/11/2026', 'ZZZZ9999', 'Không có trong raw_data', ''],
+    ['21/11/2026', 'BBBB2222', '', ''],
+    ['21/11/2026', 'AAAA1111', '', 'Còn hạn'],
+  ]);
+  // A second session appends below the first.
+  server.saveKiemKho('22/11/2026', ['GYEGFFYE']);
+  assert.deepEqual(plain(tables.kiem_kho).slice(-1), [['22/11/2026', 'GYEGFFYE', 'Đang vận chuyển', 'Còn hạn']]);
+
+  assert.throws(() => server.saveKiemKho('2026-11-21', ['GYEGFF9C']), /Ngày kiểm kho không hợp lệ/);
+  assert.throws(() => server.saveKiemKho('21/11/2026', []), /Chưa quét đơn nào/);
+  assert.throws(() => server.saveKiemKho('21/11/2026', ['=1+1+1+1']), /Mã không hợp lệ/);
+  assert.throws(() => loadServer({ raw_data: DATA, config: CONFIG }).saveKiemKho('21/11/2026', ['GYEGFF9C']), /thiếu cột trang_thai/);
+
+  const post = server.doPost({ postData: { contents: JSON.stringify({ action: 'kiemkho', ngay: '23/11/2026', codes: ['AAAA1111'] }) } });
+  assert.equal(JSON.parse(post.text).count, 1);
+  assert.deepEqual(plain(tables.kiem_kho).slice(-1), [['23/11/2026', 'AAAA1111', '', 'Còn hạn']]);
+});
+
 // ---------- Route mode: sheet config_tuyen (wards grouped into routes) ----------
 
 const ROUTES = [

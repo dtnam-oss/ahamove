@@ -170,6 +170,22 @@ var Lookup = (function () {
     };
   }
 
+  /**
+   * One scan of a Kiểm kho session: resolveStock plus the session rules. Orders missing from raw_data are
+   * kept (status 'not_found' with a code) when the scan is a real waybill code (8 letters/digits).
+   * Extra statuses: 'invalid' (not a waybill code), 'duplicate' (already in this session).
+   */
+  function resolveStockRound(raw, index, scanned) {
+    var r = resolveStock(raw, index);
+    if (r.status === 'empty' || r.status === 'unavailable') return r;
+    if (r.status === 'not_found') {
+      if (!/^[A-Z0-9]{8}$/.test(r.input)) return { status: 'invalid', input: r.input, speech: 'Mã không hợp lệ' };
+      r.code = r.input;
+    }
+    if (scanned[r.code]) return { status: 'duplicate', code: r.code, speech: 'Đã quét' };
+    return r;
+  }
+
   /** "Tuyến 2" before "Tuyến 10": compare by the trailing number, then by text. */
   function compareRouteNames(a, b) {
     var na = Number((/(\d+)\s*$/.exec(a) || [])[1]);
@@ -371,6 +387,7 @@ var Lookup = (function () {
     resolveBacklog: resolveBacklog,
     resolveReturn: resolveReturn,
     resolveStock: resolveStock,
+    resolveStockRound: resolveStockRound,
     routeSummary: routeSummary,
     routeOrderCodes: routeOrderCodes,
     resolveRouteCheck: resolveRouteCheck,

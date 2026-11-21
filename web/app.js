@@ -83,7 +83,7 @@
   // 'sort' = sorting location | 'routesort' = route | 'trip' = load/end a trip | 'dongkiem' = received orders
   // | 'trahang' = returned orders
   // | 'backlog' = days left | 'route' = route check | 'return' = returned order warehouse + state
-  // | 'kiemkho' = order state + deadline result from raw_data
+  // | 'kiemkho' = stock-check session: order state + deadline result from raw_data, saved to sheet kiem_kho
   var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
@@ -190,7 +190,6 @@
     if (mode === 'trip') { if (check && !els.checkProgress.hidden) handleCheckScan(raw); else handleTripScan(raw); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
     if (mode === 'return') { handleReturn(raw); return; }
-    if (mode === 'kiemkho') { handleStock(raw); return; }
     if (mode === 'route') { handleRouteScan(raw); return; }
     if (mode === 'routesort') { handleRouteSort(raw); return; }
     var r = Lookup.resolveScan(raw, index);
@@ -214,8 +213,7 @@
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
     if (mode === 'trip') { showTripScreen(); return; }
     if (isRoundMode(mode)) { showDkScreen(mode); return; }
-    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến', 'return': 'Chế độ kiểm tra hàng hoàn',
-      kiemkho: 'Chế độ kiểm kho: trạng thái + kết quả' };
+    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến', 'return': 'Chế độ kiểm tra hàng hoàn' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     focusInput();
   }
@@ -243,18 +241,6 @@
     else if (r.status === 'no_info') showResult('unmapped', 'Chưa có kho và trạng thái', 'Cột kho / trang_thai đang trống', r.code);
     else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu hàng hoàn', els.status.textContent);
     else showResult(r.status, 'Không có trong hàng hoàn', '', r.input);
-    speak(r.speech);
-  }
-
-  /** Kiểm kho: the state (trang_thai) large, the deadline result (ket_qua) under it; "Quá hạn" shows red. */
-  function handleStock(raw) {
-    var r = Lookup.resolveStock(raw, index);
-    if (r.status === 'empty') return;
-    if (r.status === 'ok' || r.status === 'overdue') {
-      showResult(r.status, r.trangThai || 'Chưa có trạng thái', r.ketQua || 'Chưa có kết quả', r.code);
-    } else if (r.status === 'no_info') showResult('unmapped', 'Chưa có trạng thái và kết quả', 'Cột trang_thai / ket_qua đang trống', r.code);
-    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu kiểm kho', index.stockError);
-    else showResult(r.status, 'Không tìm thấy đơn', 'Không có trong raw_data', r.input);
     speak(r.speech);
   }
 
@@ -953,13 +939,14 @@
       });
   });
 
-  // ---------- Đồng kiểm / Trả hàng modes: day + warehouse, scan, save the round once ----------
-  // Both modes share one screen; each keeps its own round on the device.
+  // ---------- Đồng kiểm / Trả hàng / Kiểm kho modes: day (+ warehouse), scan, save the round once ----------
+  // The modes share one screen; each keeps its own round on the device. Kiểm kho has no warehouse.
   var ROUND_KINDS = {
     dongkiem: { title: 'Đồng kiểm', key: 'dongKiem.v1', sheet: 'data_dong_kiem', dayLabel: 'Ngày nhận đơn', khoLabel: 'Kho nhận', dayWord: 'nhận' },
     trahang: { title: 'Trả hàng', key: 'traHang.v1', sheet: 'tra_hang', dayLabel: 'Ngày trả', khoLabel: 'Kho trả', dayWord: 'trả' },
+    kiemkho: { title: 'Kiểm kho', key: 'kiemKho.v1', sheet: 'kiem_kho', dayLabel: 'Ngày kiểm kho', khoLabel: '', dayWord: 'kiểm', noKho: true },
   };
-  var rounds = { dongkiem: null, trahang: null }; // per mode: {ngay: 'dd/MM/yyyy', kho, codes: [...]} or null
+  var rounds = { dongkiem: null, trahang: null, kiemkho: null }; // per mode: {ngay: 'dd/MM/yyyy', kho, codes: [...]} or null
   var dkKind = 'dongkiem'; // mode whose round the shared screen shows
   var dk = null; // rounds[dkKind]
   var dkIn = {};
@@ -989,7 +976,7 @@
     Object.keys(ROUND_KINDS).forEach(function (kind) {
       try {
         var saved = JSON.parse(localStorage.getItem(ROUND_KINDS[kind].key) || 'null');
-        if (saved && saved.ngay && saved.kho && Array.isArray(saved.codes)) rounds[kind] = saved;
+        if (saved && saved.ngay && (saved.kho || ROUND_KINDS[kind].noKho) && Array.isArray(saved.codes)) rounds[kind] = saved;
       } catch (e) { /* corrupt or blocked: no round in progress */ }
     });
   }
@@ -1005,6 +992,7 @@
     var k = ROUND_KINDS[kind];
     els.dkDayLabel.textContent = k.dayLabel;
     els.dkKhoLegend.textContent = k.khoLabel;
+    els.dkKhoLegend.parentNode.hidden = Boolean(k.noKho); // the warehouse fieldset
     els.dkSource.hidden = kind !== 'dongkiem';
     if (kind === 'dongkiem') loadPending();
     if (dk) enterDkScan(); else showDkSetup();
@@ -1048,8 +1036,8 @@
     var day = inputToDay(els.dkDay.value);
     var kho = els.dkSetup.querySelector('input[name=dk-kho]:checked');
     if (!day) { els.dkHint.textContent = 'Chọn ' + k.dayLabel.toLowerCase(); return; }
-    if (!kho) { els.dkHint.textContent = 'Chọn ' + k.khoLabel.toLowerCase(); return; }
-    setDk({ ngay: day, kho: kho.value, codes: [] });
+    if (!kho && !k.noKho) { els.dkHint.textContent = 'Chọn ' + k.khoLabel.toLowerCase(); return; }
+    setDk({ ngay: day, kho: k.noKho ? '' : kho.value, codes: [] });
     enterDkScan();
   });
 
@@ -1059,11 +1047,14 @@
     els.dkProgress.hidden = false;
     els.form.hidden = false;
     els.result.hidden = false;
-    els.dkLabel.textContent = k.title + ' · kho ' + dk.kho + ' · ' + k.dayWord + ' ' + dk.ngay;
+    els.dkLabel.textContent = k.title + khoText(dk) + ' · ' + k.dayWord + ' ' + dk.ngay;
     updateDkCount();
-    showResult('idle', 'Sẵn sàng quét', k.title + ' kho ' + dk.kho);
+    showResult('idle', 'Sẵn sàng quét', k.title + khoText(dk));
     focusInput();
   }
+
+  /** " · kho X" for a round with a warehouse, '' for Kiểm kho. */
+  function khoText(round) { return round.kho ? ' · kho ' + round.kho : ''; }
 
   /** "x/total đơn" for Đồng kiểm once the pending list is loaded, otherwise "x đơn". */
   function dkCountText() {
@@ -1078,6 +1069,7 @@
 
   function handleDkScan(raw) {
     if (!dk || els.dkProgress.hidden) return; // day and warehouse not chosen yet
+    if (dkKind === 'kiemkho') { handleStockScan(raw); return; }
     var r;
     if (dkKind === 'dongkiem') {
       if (!pending) {
@@ -1103,15 +1095,36 @@
     speak(r.speech);
   }
 
+  /**
+   * Kiểm kho scan: the state (trang_thai) large, the deadline result (ket_qua) under it, "Quá hạn" in red.
+   * Every real waybill code joins the session, also one missing from raw_data (the sheet records it as such).
+   */
+  function handleStockScan(raw) {
+    if (!index) { if (Lookup.normalizeCode(raw)) speak('Chưa tải dữ liệu'); return; }
+    var r = Lookup.resolveStockRound(raw, index, dkIn);
+    if (r.status === 'empty') return;
+    if (r.status === 'unavailable') { showResult(r.status, 'Chưa có dữ liệu kiểm kho', index.stockError); speak(r.speech); return; }
+    if (r.status === 'invalid') { showResult('not_found', 'Mã không hợp lệ', 'Cần 8 ký tự chữ/số liền nhau — không thêm vào phiên', r.input); speak(r.speech); return; }
+    if (r.status === 'duplicate') { showResult('unmapped', 'Đã quét', 'Đơn đã có trong phiên này', r.code); speak(r.speech); return; }
+    dk.codes.push(r.code);
+    setDk(dk);
+    updateDkCount();
+    var count = ' · ' + dkCountText();
+    if (r.status === 'not_found') showResult('not_found', 'Không tìm thấy đơn', 'Không có trong raw_data' + count, r.code);
+    else if (r.status === 'no_info') showResult('unmapped', 'Chưa có trạng thái và kết quả', 'Cột trang_thai / ket_qua đang trống' + count, r.code);
+    else showResult(r.status, r.trangThai || 'Chưa có trạng thái', (r.ketQua || 'Chưa có kết quả') + count, r.code);
+    speak(r.speech);
+  }
+
   els.dkFinish.addEventListener('click', function () {
     if (!dk || !dk.codes.length || dkSaving) return;
     var kind = dkKind;
     var k = ROUND_KINDS[kind];
-    if (!window.confirm('Kết thúc ' + k.title.toLowerCase() + ': ' + dk.codes.length + ' đơn · kho ' + dk.kho + ' · ngày ' + k.dayWord + ' ' + dk.ngay + '?')) return;
+    if (!window.confirm('Kết thúc ' + k.title.toLowerCase() + ': ' + dk.codes.length + ' đơn' + khoText(dk) + ' · ngày ' + k.dayWord + ' ' + dk.ngay + '?')) return;
     var round = dk;
     dkSaving = true;
     updateDkCount();
-    showResult('pending', 'Đang ghi…', round.codes.length + ' đơn · kho ' + round.kho);
+    showResult('pending', 'Đang ghi…', round.codes.length + ' đơn' + khoText(round));
     apiPost({ action: kind, ngay: round.ngay, kho: round.kho, codes: round.codes })
       .then(function (body) {
         var shown = dkKind === kind && isRoundMode(mode);
@@ -1119,7 +1132,7 @@
         useKind(kind);
         setDk(null);
         useKind(was);
-        var text = 'Đã ghi ' + body.count + ' đơn vào ' + k.sheet + ' · kho ' + round.kho + ' · ngày ' + k.dayWord + ' ' + round.ngay;
+        var text = 'Đã ghi ' + body.count + ' đơn vào ' + k.sheet + khoText(round) + ' · ngày ' + k.dayWord + ' ' + round.ngay;
         if (shown) showDkSetup(text);
         speak('Đã ghi ' + body.count + ' đơn');
       })
