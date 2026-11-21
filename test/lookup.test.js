@@ -78,8 +78,22 @@ function loadServer(tables, geo = {}) {
       : { status: 'OK', results: [] };
     return { getResponseCode: () => geo.httpStatus || 200, getHeaders: () => ({}), getContentText: () => JSON.stringify(body) };
   };
+  // Telegram sendMessage: bodies are kept in ctx.telegram; geo.telegramError = API error description,
+  // geo.telegramDown = network failure (its message carries the URL, so the token must be scrubbed).
+  const telegram = [];
+  const tg = (url, opts) => {
+    assert.equal(url, 'https://api.telegram.org/bottest-token/sendMessage');
+    assert.equal(opts.muteHttpExceptions, true);
+    if (geo.telegramDown) throw new Error('Địa chỉ không khả dụng: ' + url);
+    telegram.push(JSON.parse(opts.payload));
+    const fail = geo.telegramError;
+    return {
+      getResponseCode: () => (fail ? 400 : 200),
+      getContentText: () => JSON.stringify(fail ? { ok: false, description: fail } : { ok: true }),
+    };
+  };
   const UrlFetchApp = {
-    fetch: goong,
+    fetch: (url, opts) => (url.startsWith('https://api.telegram.org/') ? tg(url, opts) : goong(url)),
     fetchAll: (requests) => {
       if (geo.networkErrors > 0) { geo.networkErrors--; throw new Error('Địa chỉ không khả dụng: ' + requests[0].url); }
       return requests.map((r) => { assert.equal(r.muteHttpExceptions, true); return goong(r.url); });
@@ -106,14 +120,18 @@ function loadServer(tables, geo = {}) {
   const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
   const ctx = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, UrlFetchApp, Utilities, console, geocoded,
+    telegram,
   });
-  vm.runInContext(read('gas/config.example.js').replace("GOONG_API_KEY = ''", "GOONG_API_KEY = 'test-key'")
-    .replace("'YOUR_PENDING_PU_SHEET_ID'", "'test-pending-pu'"), ctx);
+  const telegramOn = geo.telegramOff ? (s) => s : (s) => s.replace("TELEGRAM_BOT_TOKEN = ''", "TELEGRAM_BOT_TOKEN = 'test-token'")
+    .replace("TELEGRAM_CHAT_ID = ''", "TELEGRAM_CHAT_ID = '-100test'");
+  vm.runInContext(telegramOn(read('gas/config.example.js').replace("GOONG_API_KEY = ''", "GOONG_API_KEY = 'test-key'")
+    .replace("'YOUR_PENDING_PU_SHEET_ID'", "'test-pending-pu'")), ctx);
   vm.runInContext(read('gas/Code.js'), ctx);
   vm.runInContext(read('gas/routes.js'), ctx);
   vm.runInContext(read('gas/goong.js'), ctx);
   vm.runInContext(read('gas/locate.js'), ctx);
   vm.runInContext(read('gas/trips.js'), ctx);
+  vm.runInContext(read('gas/telegram.js'), ctx);
   vm.runInContext(read('gas/scan-rounds.js'), ctx);
   return ctx;
 }
@@ -996,6 +1014,48 @@ test('saveDongKiem appends one text row per order; columns found by header, miss
     ['OLD00001', 'x', 'Thuận Thành', '17/11/2026'],
     ['GYE7WB4C', '', 'Thuận Thành', '18/11/2026', r2.thoi_gian],
   ]);
+});
+
+test('saved đồng kiểm round posts warehouse + picked-up codes to the Telegram group', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG });
+  const r = server.saveDongKiem('21/11/2026', 'Yên Phong', ['gye7wb4c', 'GYEFAPQW', 'GYE7WB4C']);
+  assert.equal(r.telegram, 'ok');
+  assert.deepEqual(JSON.parse(JSON.stringify(server.telegram)), [{
+    chat_id: '-100test',
+    text: 'Đồng kiểm kho Yên Phong · ngày nhận 21/11/2026\nĐã lấy thành công 2 đơn:\n1. GYE7WB4C\n2. GYEFAPQW',
+    disable_web_page_preview: true,
+  }]);
+
+  // Trả hàng and Kiểm kho send nothing.
+  server.saveTraHang('21/11/2026', 'Yên Phong', ['GYE7WB4C']);
+  assert.equal(server.telegram.length, 1);
+
+  // A long round is split under Telegram's limit; every code is sent once, in order.
+  const many = Array.from({ length: 600 }, (_, i) => 'GYE' + String(i).padStart(5, '0'));
+  const big = loadServer({ raw_data: DATA, config: CONFIG });
+  assert.equal(big.saveDongKiem('21/11/2026', 'Thuận Thành', many).telegram, 'ok');
+  assert.ok(big.telegram.length > 1);
+  big.telegram.forEach((m) => assert.ok(m.text.length <= 4000));
+  assert.match(big.telegram[1].text, /^Đồng kiểm kho Thuận Thành · ngày nhận 21\/11\/2026\nĐã lấy thành công 600 đơn: \(tiếp\)\n/);
+  const sent = big.telegram.flatMap((m) => m.text.split('\n').filter((l) => /^\d+\. /.test(l)).map((l) => l.replace(/^\d+\. /, '')));
+  assert.deepEqual(sent, many);
+});
+
+test('a failed Telegram notice is reported but never fails the saved round; token never leaks', () => {
+  const tables = { raw_data: DATA, config: CONFIG };
+  const api = loadServer(tables, { telegramError: 'Bad Request: chat not found' });
+  const r = api.saveDongKiem('21/11/2026', 'Yên Phong', ['GYE7WB4C']);
+  assert.deepEqual([r.ok, r.count, r.telegram], [true, 1, 'lỗi: Bad Request: chat not found']);
+  assert.equal(tables.data_dong_kiem.length, 2, 'the row is saved anyway');
+
+  const down = loadServer({ raw_data: DATA, config: CONFIG }, { telegramDown: true }).saveDongKiem('21/11/2026', 'Yên Phong', ['GYE7WB4C']);
+  assert.equal(down.ok, true);
+  assert.match(down.telegram, /^lỗi: Địa chỉ không khả dụng/);
+  assert.ok(!down.telegram.includes('test-token'), down.telegram);
+
+  const off = loadServer({ raw_data: DATA, config: CONFIG }, { telegramOff: true });
+  assert.equal(off.saveDongKiem('21/11/2026', 'Yên Phong', ['GYE7WB4C']).telegram, 'off');
+  assert.equal(off.telegram.length, 0);
 });
 
 test('saveDongKiem rejects bad day, warehouse or codes; endpoint answers {error}', () => {

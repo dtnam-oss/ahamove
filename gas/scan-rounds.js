@@ -1,5 +1,6 @@
 // Scan rounds by day + warehouse: orders scanned on the device and saved once when the user finishes.
 //   "Đồng kiểm" (received orders): POST {action:'dongkiem', ngay, kho, codes} -> sheet data_dong_kiem
+//                                  + a Telegram notice to the group (warehouse + picked-up codes)
 //   "Trả hàng" (returned orders):  POST {action:'trahang',  ngay, kho, codes} -> sheet tra_hang
 //   "Kiểm kho" (stock check):      POST {action:'kiemkho',  ngay, codes}      -> sheet kiem_kho
 // Đồng kiểm checks each scan against the pending pick-up list: GET ?action=pendingpu -> pendingPu().
@@ -12,8 +13,13 @@ const SCAN_ROUND_MAX_CODES = 5000;
 
 // Per kind: sheet name, its day / warehouse / code column headers, and the words used in error messages.
 // Optional: khoCol null = no warehouse; fields + lookup = extra columns filled per code by the server;
-// noTime = no thoi_gian column.
-const DONG_KIEM = { sheet: 'data_dong_kiem', dayCol: 'ngay', khoCol: 'kho', codeCol: 'ma_don', dayName: 'Ngày nhận', khoName: 'Kho nhận' };
+// noTime = no thoi_gian column; notify(day, kho, codes) runs after the rows are saved and its status is
+// returned as `telegram` (a failed notice never fails the save, so retrying cannot duplicate rows).
+// Đồng kiểm also posts the warehouse + the picked-up codes to the Telegram group (telegram.js).
+const DONG_KIEM = {
+  sheet: 'data_dong_kiem', dayCol: 'ngay', khoCol: 'kho', codeCol: 'ma_don', dayName: 'Ngày nhận', khoName: 'Kho nhận',
+  notify: notifyDongKiem_,
+};
 const TRA_HANG = { sheet: 'tra_hang', dayCol: 'ngay_tra', khoCol: 'kho_tra', codeCol: 'tracking_number', dayName: 'Ngày trả', khoName: 'Kho trả' };
 // "Kiểm kho": one row per scanned order with its state + deadline result, read from raw_data at save time
 // (never trusted from the device). An order missing from raw_data is still recorded.
@@ -64,6 +70,7 @@ function saveScanRound_(kind, ngay, kho, codes) {
   const extra = kind.lookup ? kind.lookup(ss, list) : {}; // code -> {field: value}, read before taking the lock
   const header = [kind.dayCol].concat(kind.khoCol ? [kind.khoCol] : [], [kind.codeCol], kind.fields || [],
     kind.noTime ? [] : ['thoi_gian']);
+  let result;
   const lock = LockService.getScriptLock();
   lock.waitLock(10000);
   try {
@@ -86,10 +93,18 @@ function saveScanRound_(kind, ngay, kho, codes) {
     // Plain text keeps the day and time as written (no date coercion).
     sheet.getRange(sheet.getLastRow() + 1, 1, values.length, layout.width).setNumberFormat('@').setValues(values);
     SpreadsheetApp.flush();
-    return { ok: true, count: list.length, thoi_gian: time };
+    result = { ok: true, count: list.length, thoi_gian: time };
   } finally {
     lock.releaseLock();
   }
+  if (kind.notify) result.telegram = kind.notify(day, warehouse, list); // network call outside the lock
+  return result;
+}
+
+/** Telegram notice of a saved Đồng kiểm round: warehouse + day, then the numbered picked-up codes. */
+function notifyDongKiem_(day, kho, codes) {
+  const header = 'Đồng kiểm kho ' + kho + ' · ngày nhận ' + day + '\nĐã lấy thành công ' + codes.length + ' đơn:';
+  return sendTelegramAll_(telegramMessages_(header, codes.map(function (c, i) { return (i + 1) + '. ' + c; })));
 }
 
 /**

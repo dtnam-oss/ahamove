@@ -1133,6 +1133,9 @@
         setDk(null);
         useKind(was);
         var text = 'Đã ghi ' + body.count + ' đơn vào ' + k.sheet + khoText(round) + ' · ngày ' + k.dayWord + ' ' + round.ngay;
+        // Đồng kiểm: the server also posts the list to the Telegram group ('ok' | 'off' | 'lỗi: …').
+        if (body.telegram === 'ok') text += ' · đã gửi Telegram';
+        else if (body.telegram && body.telegram !== 'off') text += ' · Telegram ' + body.telegram;
         if (shown) showDkSetup(text);
         speak('Đã ghi ' + body.count + ' đơn');
       })
