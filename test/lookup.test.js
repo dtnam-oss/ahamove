@@ -344,6 +344,44 @@ test('hàng hoàn scan speaks the warehouse and the state', () => {
   assert.equal(Lookup.resolveReturn('GYEBM4TC', noReturns).speech, 'Chưa có dữ liệu hàng hoàn');
 });
 
+// ---------- Kiểm kho mode: raw_data columns trang_thai + ket_qua ----------
+
+// DATA plus the two Vietnamese columns of the live raw_data (ket_qua, trang_thai), in that order.
+const STOCK_DATA = DATA.map((row, i) => row.concat(i === 0 ? ['ket_qua', 'trang_thai'] : [
+  ['Quá hạn', 'Trả hàng'], ['Còn hạn', 'Đang vận chuyển'], ['Còn hạn', ''], ['', ''], ['Còn hạn', 'Đã nhận'], ['', ''], ['', ''],
+][i - 1]));
+
+test('server payload carries trang_thai + ket_qua per order; missing columns never break sorting', () => {
+  const payload = loadServer({ raw_data: STOCK_DATA, config: CONFIG }).getLookupData();
+  assert.deepEqual([payload.orders.GYEGFF9C.trang_thai, payload.orders.GYEGFF9C.ket_qua], ['Trả hàng', 'Quá hạn']);
+  assert.deepEqual([payload.orders.AAAA1111.trang_thai, payload.orders.AAAA1111.ket_qua], ['', 'Còn hạn']);
+  assert.equal(payload.stockError, '');
+  assert.ok(!JSON.stringify(payload).includes('Ngõ'));
+  const old = loadServer({ raw_data: DATA, config: CONFIG }).getLookupData();
+  assert.equal(old.orderCount, 6);
+  assert.equal(old.orders.GYEGFF9C.district, 'Huyện Thanh Trì');
+  assert.match(old.stockError, /Sheet "raw_data" thiếu cột trang_thai, ket_qua/);
+});
+
+test('kiểm kho scan speaks trang_thai then ket_qua in Vietnamese', () => {
+  const Lookup = loadLookup();
+  const index = Lookup.buildIndex(loadServer({ raw_data: STOCK_DATA, config: CONFIG }).getLookupData());
+  const over = Lookup.resolveStock(' gyegff9c ', index);
+  assert.deepEqual([over.status, over.code, over.trangThai, over.ketQua, over.speech],
+    ['overdue', 'GYEGFF9C', 'Trả hàng', 'Quá hạn', 'Trả hàng, Quá hạn']);
+  const ok = Lookup.resolveStock('https://x.vn/t?code=GYEGFFYE', index);
+  assert.deepEqual([ok.status, ok.speech], ['ok', 'Đang vận chuyển, Còn hạn']);
+  assert.deepEqual([Lookup.resolveStock('AAAA1111', index).speech], ['Còn hạn']); // trang_thai still empty
+  const none = Lookup.resolveStock('BBBB2222', index);
+  assert.deepEqual([none.status, none.speech], ['no_info', 'Chưa có trạng thái và kết quả']);
+  const nf = Lookup.resolveStock('ZZZZ9999', index);
+  assert.deepEqual([nf.status, nf.input, nf.speech], ['not_found', 'ZZZZ9999', 'Không tìm thấy đơn']);
+  assert.equal(Lookup.resolveStock('  ', index).status, 'empty');
+  const noCols = Lookup.buildIndex(loadServer({ raw_data: DATA, config: CONFIG }).getLookupData());
+  assert.deepEqual([Lookup.resolveStock('GYEGFF9C', noCols).status, Lookup.resolveStock('GYEGFF9C', noCols).speech],
+    ['unavailable', 'Chưa có dữ liệu kiểm kho']);
+});
+
 // ---------- Route mode: sheet config_tuyen (wards grouped into routes) ----------
 
 const ROUTES = [

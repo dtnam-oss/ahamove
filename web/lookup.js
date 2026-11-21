@@ -74,6 +74,7 @@ var Lookup = (function () {
     }
     return {
       orders: orders, areas: areas, backlog: backlog, returns: returns,
+      stockError: String(payload.stockError || ''), // raw_data lacks trang_thai / ket_qua (Kiểm kho)
       routes: routes, routeRows: routeRows, routePoints: routePoints, orderRoute: orderRoute,
     };
   }
@@ -146,6 +147,27 @@ var Lookup = (function () {
     var state = String(row.trang_thai || '').trim();
     if (!kho && !state) return { status: 'no_info', code: code, speech: 'Chưa có kho và trạng thái' };
     return { status: 'ok', code: code, kho: kho, trangThai: state, speech: [kho, state].filter(Boolean).join(', ') };
+  }
+
+  /**
+   * Kiểm kho (sheet raw_data): speak the order state then the deadline result, e.g. "Trả hàng, Quá hạn".
+   * status: 'empty' | 'unavailable' (columns missing) | 'not_found' | 'no_info' (both empty)
+   * | 'overdue' (ket_qua "Quá hạn") | 'ok'.
+   */
+  function resolveStock(raw, index) {
+    if (!normalizeCode(raw)) return { status: 'empty', speech: '' };
+    if (index.stockError) return { status: 'unavailable', speech: 'Chưa có dữ liệu kiểm kho' };
+    var code = findCode(raw, index.orders);
+    if (!code) return { status: 'not_found', input: normalizeCode(raw), speech: 'Không tìm thấy đơn' };
+    var order = index.orders.get(code) || {};
+    var state = String(order.trang_thai || '').trim();
+    var result = String(order.ket_qua || '').trim();
+    if (!state && !result) return { status: 'no_info', code: code, speech: 'Chưa có trạng thái và kết quả' };
+    return {
+      status: normalizeText(result) === normalizeText('Quá hạn') ? 'overdue' : 'ok',
+      code: code, trangThai: state, ketQua: result,
+      speech: [state, result].filter(Boolean).join(', '),
+    };
   }
 
   /** "Tuyến 2" before "Tuyến 10": compare by the trailing number, then by text. */
@@ -348,6 +370,7 @@ var Lookup = (function () {
     resolveScan: resolveScan,
     resolveBacklog: resolveBacklog,
     resolveReturn: resolveReturn,
+    resolveStock: resolveStock,
     routeSummary: routeSummary,
     routeOrderCodes: routeOrderCodes,
     resolveRouteCheck: resolveRouteCheck,

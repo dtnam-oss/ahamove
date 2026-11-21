@@ -1,6 +1,7 @@
 // Backend of the order-sorting tool (Google Apps Script web app).
 // GET ?action=data returns a minimal lookup payload: order code -> district/ward + location and route config,
-// plus the back_log days and the returned orders (sheet return: warehouse + state).
+// plus the order state + deadline result (Kiểm kho), the back_log days and the returned orders
+// (sheet return: warehouse + state).
 // GET ?action=locate&code=X returns the map point of one order (see locate.js).
 // GET ?action=trips&day=dd/MM/yyyy / ?action=opentrips and POST {action:'trip'|'endTrip'} manage trips (see trips.js).
 // GET ?action=pendingpu lists pending pick-up orders per warehouse for Đồng kiểm; POST {action:'dongkiem'|'trahang',
@@ -77,9 +78,14 @@ function getLookupData() {
   const data = readTable_(ss, DATA_SHEET, ['tracking_number', 'status', 'district']);
   const conf = readTable_(ss, CONFIG_SHEET, ['ten_vi_tri', 'khu_vuc']);
 
-  // orders: code -> { district, ward, status }. Status is passed raw; the client owns the cancel rule.
-  // ward is parsed from the address (dropoff, optional); the address itself never leaves the sheet.
+  // orders: code -> { district, ward, status, trang_thai, ket_qua }. Status is passed raw; the client owns the
+  // cancel rule. ward is parsed from the address (dropoff, optional); the address itself never leaves the sheet.
+  // trang_thai + ket_qua (Vietnamese order state / deadline result) feed the Kiểm kho mode only, so they are
+  // optional: a missing column is reported in stockError and never breaks sorting.
   const dropoff = data.header.indexOf('dropoff');
+  const stateAt = data.header.indexOf('trang_thai');
+  const resultAt = data.header.indexOf('ket_qua');
+  const stockMissing = ['trang_thai', 'ket_qua'].filter(function (c) { return data.header.indexOf(c) < 0; });
   const orders = {};
   data.rows.forEach(function (r) {
     const code = String(r[data.col.tracking_number]).trim().toUpperCase();
@@ -88,6 +94,8 @@ function getLookupData() {
       district: String(r[data.col.district]).trim(),
       ward: dropoff < 0 ? '' : parseWard_(r[dropoff]),
       status: String(r[data.col.status]).trim(),
+      trang_thai: stateAt < 0 ? '' : String(r[stateAt]).trim(),
+      ket_qua: resultAt < 0 ? '' : String(r[resultAt]).trim(),
     };
   });
 
@@ -110,6 +118,7 @@ function getLookupData() {
     updatedAt: new Date().toISOString(),
     orderCount: Object.keys(orders).length,
     orders: orders,
+    stockError: stockMissing.length ? 'Sheet "' + DATA_SHEET + '" thiếu cột ' + stockMissing.join(', ') : '',
     config: config,
     backlog: backlog.days, // code -> days left (display string), or null when back_log is unreadable
     backlogError: backlog.error,

@@ -83,6 +83,7 @@
   // 'sort' = sorting location | 'routesort' = route | 'trip' = load/end a trip | 'dongkiem' = received orders
   // | 'trahang' = returned orders
   // | 'backlog' = days left | 'route' = route check | 'return' = returned order warehouse + state
+  // | 'kiemkho' = order state + deadline result from raw_data
   var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
@@ -158,7 +159,8 @@
         var backlogInfo = body.backlog ? Object.keys(body.backlog).length + ' backlog' : 'backlog lỗi: ' + body.backlogError;
         var routeInfo = body.routes ? countRoutes(body.routes) + ' tuyến' : 'tuyến lỗi: ' + body.routesError;
         var returnInfo = body.returns ? Object.keys(body.returns).length + ' hàng hoàn' : 'hàng hoàn lỗi: ' + body.returnsError;
-        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · ' + returnInfo + ' · cập nhật ' + time;
+        var stockInfo = body.stockError ? ' · kiểm kho lỗi: ' + body.stockError : '';
+        els.status.textContent = body.orderCount + ' đơn · ' + backlogInfo + ' · ' + routeInfo + ' · ' + returnInfo + stockInfo + ' · cập nhật ' + time;
         if (mode === 'route') showRouteScreen(); // totals follow the reloaded raw_data
         if (mode === 'trip' && !els.tripHome.hidden) loadTripList();
       })
@@ -188,6 +190,7 @@
     if (mode === 'trip') { if (check && !els.checkProgress.hidden) handleCheckScan(raw); else handleTripScan(raw); return; }
     if (mode === 'backlog') { handleBacklog(raw); return; }
     if (mode === 'return') { handleReturn(raw); return; }
+    if (mode === 'kiemkho') { handleStock(raw); return; }
     if (mode === 'route') { handleRouteScan(raw); return; }
     if (mode === 'routesort') { handleRouteSort(raw); return; }
     var r = Lookup.resolveScan(raw, index);
@@ -211,7 +214,8 @@
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
     if (mode === 'trip') { showTripScreen(); return; }
     if (isRoundMode(mode)) { showDkScreen(mode); return; }
-    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến', 'return': 'Chế độ kiểm tra hàng hoàn' };
+    var hints = { backlog: 'Chế độ kiểm tra backlog', routesort: 'Chế độ chia đơn theo tuyến', 'return': 'Chế độ kiểm tra hàng hoàn',
+      kiemkho: 'Chế độ kiểm kho: trạng thái + kết quả' };
     showResult('idle', 'Sẵn sàng quét', hints[mode] || '');
     focusInput();
   }
@@ -239,6 +243,18 @@
     else if (r.status === 'no_info') showResult('unmapped', 'Chưa có kho và trạng thái', 'Cột kho / trang_thai đang trống', r.code);
     else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu hàng hoàn', els.status.textContent);
     else showResult(r.status, 'Không có trong hàng hoàn', '', r.input);
+    speak(r.speech);
+  }
+
+  /** Kiểm kho: the state (trang_thai) large, the deadline result (ket_qua) under it; "Quá hạn" shows red. */
+  function handleStock(raw) {
+    var r = Lookup.resolveStock(raw, index);
+    if (r.status === 'empty') return;
+    if (r.status === 'ok' || r.status === 'overdue') {
+      showResult(r.status, r.trangThai || 'Chưa có trạng thái', r.ketQua || 'Chưa có kết quả', r.code);
+    } else if (r.status === 'no_info') showResult('unmapped', 'Chưa có trạng thái và kết quả', 'Cột trang_thai / ket_qua đang trống', r.code);
+    else if (r.status === 'unavailable') showResult(r.status, 'Chưa có dữ liệu kiểm kho', index.stockError);
+    else showResult(r.status, 'Không tìm thấy đơn', 'Không có trong raw_data', r.input);
     speak(r.speech);
   }
 
