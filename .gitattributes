@@ -1,2 +1,5 @@
-# pc-typer is zipped on Linux CI and run on Windows: keep Windows line endings in the shipped files.
-pc-typer/* text eol=crlf
+# pc-typer is zipped on Linux CI: Windows files keep Windows line endings, Mac files Unix ones
+# (a CRLF in start.command would break its #!/bin/bash line).
+pc-typer/*.txt text eol=crlf
+pc-typer/windows/* text eol=crlf
+pc-typer/mac/* text eol=lf

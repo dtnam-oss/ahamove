@@ -1170,7 +1170,7 @@
     showDkSetup();
   });
 
-  // ---------- Quét QR mode: each scan is typed into the focused cell on a paired Windows PC ----------
+  // ---------- Quét QR mode: each scan is typed into the focused cell on a paired PC (Windows or Mac) ----------
   // pc-typer (folder pc-typer/, shipped as pc-typer.zip) runs an HTTPS server on the PC; opening the address it
   // shows sends the phone back here with '#pc=<host:port>&key=<key>', kept on this device.
   var PC_LINK_KEY = 'pcTyper.v1';
@@ -1257,9 +1257,9 @@
     var link = function (text, href) { var a = el('a', '', text); a.href = href; return a; };
     box.textContent = '';
     if (!pcLink) {
-      box.appendChild(document.createTextNode('Chưa kết nối máy tính. Trên máy tính Windows: tải '));
+      box.appendChild(document.createTextNode('Chưa kết nối máy tính. Trên máy tính (Windows hoặc Mac): tải '));
       box.appendChild(link('pc-typer.zip', 'pc-typer.zip'));
-      box.appendChild(document.createTextNode(', giải nén, bấm đúp start.cmd (xem HUONG-DAN.txt), rồi mở trên điện thoại địa chỉ hiện trong cửa sổ pc-typer.'));
+      box.appendChild(document.createTextNode(', giải nén, chạy start.cmd (Windows) hoặc start.command (Mac) theo HUONG-DAN.txt, rồi mở trên điện thoại địa chỉ hiện trong cửa sổ pc-typer.'));
     } else {
       box.appendChild(document.createTextNode('Kiểm tra cửa sổ pc-typer trên máy tính còn mở và điện thoại chung Wi-Fi, rồi mở '));
       box.appendChild(link('https://' + pcLink.pc, 'https://' + pcLink.pc + '/?key=' + pcLink.key));

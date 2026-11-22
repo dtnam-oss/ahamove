@@ -147,13 +147,14 @@ Bấm **Kiểm kho** → chọn **ngày kiểm kho** → **Bắt đầu quét**.
 
 ## Chế độ Quét QR (gõ vào máy tính)
 
-Điện thoại dùng như súng barcode cho máy tính Windows: quét mã ở tab **Quét QR** → máy tính gõ mã vào chỗ con trỏ (ô Excel, Google Sheet, Notepad…) rồi Enter để xuống dòng. Không tra dữ liệu, không ghi Google Sheets qua Apps Script: mã được gõ nguyên văn.
+Điện thoại dùng như súng barcode cho máy tính Windows hoặc Mac: quét mã ở tab **Quét QR** → máy tính gõ mã vào chỗ con trỏ (ô Excel, Google Sheet, Notepad…) rồi Enter để xuống dòng. Không tra dữ liệu, không ghi Google Sheets qua Apps Script: mã được gõ nguyên văn.
 
-- Máy tính chạy **pc-typer** (thư mục `pc-typer/`, tải sẵn dạng zip tại https://dtnam-oss.github.io/ahamove/pc-typer.zip — workflow đóng gói mỗi lần deploy). Chỉ cần Windows 10/11: PowerShell + .NET có sẵn, không cài gì. Hướng dẫn cho người dùng: `pc-typer/HUONG-DAN.txt`.
-- pc-typer mở server HTTPS cổng 8443 trong mạng LAN (chứng chỉ tự ký và mã kết nối 8 ký tự tạo ở lần chạy đầu, lưu trong kho chứng chỉ của user và `%LOCALAPPDATA%\pc-typer`). Cửa sổ pc-typer hiện địa chỉ `https://<IP>:8443/?key=<mã>`.
+- Máy tính chạy **pc-typer** (thư mục `pc-typer/`, tải sẵn dạng zip tại https://dtnam-oss.github.io/ahamove/pc-typer.zip — workflow đóng gói mỗi lần deploy). Hướng dẫn cho người dùng: `pc-typer/HUONG-DAN.txt`.
+  - Windows 10/11 (`pc-typer/windows/`): PowerShell + .NET có sẵn, không cài gì; gõ bằng sự kiện phím Unicode nên Unikey không làm biến dạng mã. Không gõ được vào chương trình chạy quyền Administrator.
+  - Mac (`pc-typer/mac/`): cần Node.js; chứng chỉ tạo bằng `openssl` có sẵn của macOS; gõ qua System Events (`osascript`), cần quyền Trợ năng cho Terminal. Gõ theo bàn phím đang chọn, nên khi quét phải tắt gõ tiếng Việt (như súng barcode). Chưa chạy thử trên máy Mac thật.
+- pc-typer mở server HTTPS cổng 8443 trong mạng LAN (chứng chỉ tự ký và mã kết nối 8 ký tự tạo ở lần chạy đầu; Windows: kho chứng chỉ của user + `%LOCALAPPDATA%\pc-typer`, Mac: `~/Library/Application Support/pc-typer`). Hai bản dùng chung giao thức nên tab Quét QR không phân biệt máy. Cửa sổ pc-typer hiện địa chỉ `https://<IP>:8443/?key=<mã>`.
 - Ghép nối: mở địa chỉ đó trên điện thoại (cùng Wi-Fi) → chấp nhận cảnh báo chứng chỉ → trang tự chuyển về app với `#pc=<IP:port>&key=<mã>`, lưu trên điện thoại và mở tab Quét QR. Chrome hỏi quyền "thiết bị trong mạng cục bộ" thì bấm Cho phép.
 - Mỗi lần quét gửi `POST /type` (header `X-Key`); các mã được gửi lần lượt nên máy tính gõ đúng thứ tự quét. Không có mã kết nối thì máy khác trong mạng không gõ được gì; server chỉ gõ chữ in được (bỏ ký tự điều khiển), tối đa 200 ký tự.
-- Gõ bằng sự kiện phím Unicode nên Unikey/bộ gõ không làm biến dạng mã. Không gõ được vào chương trình chạy quyền Administrator.
 - Gửi lỗi (pc-typer tắt, khác Wi-Fi, chứng chỉ chưa được chấp nhận): màn hình đỏ "Ghi thất bại", đọc "Ghi thất bại", kèm đường dẫn để chấp nhận lại chứng chỉ — quét lại mã đó.
 
 ## Chế độ Chia tuyến
@@ -226,11 +227,12 @@ gas/                  backend Apps Script
   trips.js            createTrip / endTrip / listTrips / openTrips: chuyến đi ở sheet chuyen_di
   scan-rounds.js      pendingPu (?action=pendingpu) / saveDongKiem / saveTraHang / saveKiemKho: danh sách chờ lấy; đơn nhận / trả / kiểm kho ở sheet data_dong_kiem / tra_hang / kiem_kho
   config.example.js   mẫu config — copy thành config.js (git-ignored)
-pc-typer/             chương trình cho máy tính Windows của chế độ Quét QR (đóng gói thành web/pc-typer.zip khi deploy)
-  start.cmd           bấm đúp để chạy
-  pc-typer.ps1        server HTTPS trong LAN + gõ phím (PowerShell, C# biên dịch khi chạy)
-  HUONG-DAN.txt       hướng dẫn cài đặt, kết nối điện thoại
+pc-typer/             chương trình cho máy tính của chế độ Quét QR (đóng gói thành web/pc-typer.zip khi deploy)
+  HUONG-DAN.txt       hướng dẫn cài đặt (Windows + Mac), kết nối điện thoại
+  windows/start.cmd, windows/pc-typer.ps1   server HTTPS trong LAN + gõ phím (PowerShell, C# biên dịch khi chạy)
+  mac/start.command, mac/server.mjs         cùng giao thức cho macOS (Node.js, osascript)
 test/lookup.test.js   test logic tra cứu + backend
+test/pc-typer-mac.test.js   test pc-typer bản Mac (giao thức, osascript, mã kết nối, TLS)
 .github/workflows/pages.yml   test + đóng gói pc-typer.zip + deploy web/ lên GitHub Pages
 ```
 

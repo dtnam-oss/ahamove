@@ -1,39 +1,66 @@
-PC-TYPER — QUÉT MÃ BẰNG ĐIỆN THOẠI, GÕ VÀO MÁY TÍNH
-====================================================
+PC-TYPER — QUÉT MÃ BẰNG ĐIỆN THOẠI, GÕ VÀO MÁY TÍNH (WINDOWS / MAC)
+=====================================================================
 
 Điện thoại quét mã ở tab "Quét QR" của trang https://dtnam-oss.github.io/ahamove/
-Máy tính (Windows 10/11) tự gõ mã vào chỗ con trỏ (ô Excel, Google Sheet, Notepad...)
-rồi bấm Enter để xuống dòng — giống súng barcode. Không cần cài thêm phần mềm.
+Máy tính tự gõ mã vào chỗ con trỏ (ô Excel, Google Sheet, Notepad, Numbers...) rồi
+xuống dòng — giống súng barcode.
 
-CÀI ĐẶT (mỗi máy tính làm một lần)
+  Thư mục windows/  cho máy Windows 10/11 (không cần cài thêm gì)
+  Thư mục mac/      cho máy Mac (cần cài Node.js một lần)
+
+
+CÀI ĐẶT TRÊN WINDOWS (mỗi máy làm một lần)
 1. Bấm chuột phải vào file pc-typer.zip → Properties (Thuộc tính) → tick "Unblock"
-   (Bỏ chặn) nếu có → OK. Sau đó giải nén ra một thư mục, ví dụ Desktop\pc-typer.
-2. Bấm đúp start.cmd.
+   (Bỏ chặn) nếu có → OK. Sau đó bấm chuột phải → Extract All (Giải nén tất cả).
+   Phải giải nén, không chạy thẳng từ trong file zip.
+2. Đặt mạng Wi-Fi là mạng riêng: Settings → Network & Internet → Wi-Fi → bấm vào mạng
+   đang dùng → Network profile type → Private network. Mạng để "Public" thì tường lửa
+   chặn điện thoại kết nối vào.
+3. Mở thư mục windows, bấm đúp start.cmd.
    - Nếu Windows báo "Windows protected your PC": bấm More info → Run anyway.
-   - Nếu tường lửa (Windows Security) hỏi quyền cho Windows PowerShell: tick
-     "Private networks" (Mạng riêng) → Allow access. Máy cần quyền quản trị để bấm Allow.
-3. Cửa sổ pc-typer hiện địa chỉ dạng  https://192.168.1.10:8443/?key=ABCD2345
+   - Nếu tường lửa (Windows Security) hỏi quyền cho Windows PowerShell: bấm
+     Allow access (máy cần quyền quản trị).
+4. Cửa sổ pc-typer hiện địa chỉ dạng  https://192.168.1.10:8443/?key=ABCD2345
+
+
+CÀI ĐẶT TRÊN MAC (mỗi máy làm một lần)
+1. Cài Node.js: tải bản LTS tại https://nodejs.org, mở file .pkg và cài như bình thường.
+2. Bấm đúp pc-typer.zip để giải nén, mở thư mục mac, bấm đúp start.command.
+   - Nếu macOS báo không mở được vì "không xác định được nhà phát triển": bấm Done, vào
+     System Settings → Privacy & Security, kéo xuống bấm "Open Anyway" cho start.command,
+     rồi bấm đúp lại (macOS cũ hơn: bấm chuột phải vào start.command → Open → Open).
+   - Nếu macOS hỏi cho "node" nhận kết nối mạng: bấm Allow.
+3. Cửa sổ Terminal hiện địa chỉ dạng  https://192.168.1.10:8443/?key=ABCD2345
+4. Lần quét đầu tiên macOS hỏi cho Terminal điều khiển máy tính: bấm Open System Settings
+   → Privacy & Security → Accessibility (Trợ năng) → bật Terminal. Sau đó quét lại mã đó.
+
 
 KẾT NỐI ĐIỆN THOẠI (lần đầu, hoặc khi đổi Wi-Fi / đổi máy)
 1. Điện thoại và máy tính dùng chung một mạng Wi-Fi.
-2. Trên điện thoại, mở Chrome và gõ đúng địa chỉ trong cửa sổ pc-typer.
+2. Trên điện thoại, mở Chrome và gõ đúng địa chỉ trong cửa sổ pc-typer (cả https:// và ?key=...).
 3. Trình duyệt báo "Kết nối của bạn không phải là kết nối riêng tư": bấm Nâng cao →
    Tiếp tục truy cập (chứng chỉ do chính máy tính này tạo, không phải lỗi).
-4. Trang tự chuyển về app, mở tab "Quét QR" và kết nối máy tính. Nếu Chrome hỏi
+4. Trang tự chuyển về app, mở tab "Quét QR". Bấm "Bắt đầu ca". Nếu Chrome hỏi
    "truy cập thiết bị trong mạng cục bộ" thì bấm Cho phép.
+5. Màn hình hiện "Đã kết nối <tên máy>" là xong.
+
 
 SỬ DỤNG HẰNG NGÀY
-1. Bấm đúp start.cmd trên máy tính, giữ cửa sổ pc-typer mở.
+1. Chạy start.cmd (Windows) hoặc start.command (Mac), giữ cửa sổ pc-typer mở.
 2. Bấm vào ô cần ghi trên máy tính (ví dụ A2 trong Excel).
 3. Trên điện thoại mở tab "Quét QR", quét mã: mã hiện vào ô A2, con trỏ xuống A3...
    Mỗi mã cũng hiện trong cửa sổ pc-typer kèm giờ quét.
 
+
 LƯU Ý
 - Mã chỉ được gõ vào cửa sổ đang được chọn trên máy tính: đừng bấm sang cửa sổ khác khi quét.
-- Không gõ được vào chương trình chạy bằng quyền Administrator (trừ khi pc-typer cũng chạy
-  bằng quyền đó).
-- Mã kết nối và chứng chỉ được lưu trên máy (thư mục %LOCALAPPDATA%\pc-typer và kho chứng chỉ
-  của người dùng), nên lần sau không phải kết nối lại — trừ khi địa chỉ IP của máy đổi.
+- Mac: khi quét, chuyển bàn phím sang ABC/U.S. (tắt gõ tiếng Việt Telex/VNI), nếu không bộ gõ
+  có thể đổi mã (giống khi dùng súng barcode). Windows không bị ảnh hưởng bởi Unikey.
+- Windows: không gõ được vào chương trình chạy bằng quyền Administrator.
+- Mã kết nối và chứng chỉ được lưu trên máy (Windows: %LOCALAPPDATA%\pc-typer và kho chứng chỉ
+  của người dùng; Mac: ~/Library/Application Support/pc-typer), nên lần sau không phải kết nối
+  lại — trừ khi địa chỉ IP của máy đổi.
 - Điện thoại báo "Không kết nối được máy tính": kiểm tra cửa sổ pc-typer còn mở, chung Wi-Fi,
-  rồi bấm đường dẫn hiện trên tab "Quét QR" để chấp nhận lại chứng chỉ.
+  mạng Windows là Private, rồi bấm đường dẫn hiện trên tab "Quét QR" để chấp nhận lại chứng chỉ.
+- Điện thoại báo "Mac chưa cấp quyền Trợ năng": làm bước 4 phần cài đặt Mac.
 - Cổng 8443 đang được dùng: pc-typer đã chạy ở cửa sổ khác — dùng cửa sổ đó.
