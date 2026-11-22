@@ -42,7 +42,21 @@
       <button type="button" class="btn mode-btn" data-mode="route" aria-pressed="false">Tuyến</button>
       <button type="button" class="btn mode-btn" data-mode="return" aria-pressed="false">Hàng hoàn</button>
       <button type="button" class="btn mode-btn" data-mode="kiemkho" aria-pressed="false">Kiểm kho</button>
+      <button type="button" class="btn mode-btn" data-mode="pctype" aria-pressed="false">Quét QR</button>
     </div>
+
+    <!-- Quét QR mode: each scan is typed into the focused cell on a paired Windows PC (pc-typer, same Wi-Fi). -->
+    <div id="pc-progress" class="route-progress" hidden>
+      <div class="route-progress-info">
+        <div id="pc-label" class="muted"></div>
+        <div id="pc-count" class="route-count">0 mã</div>
+      </div>
+      <div class="route-actions">
+        <button id="pc-check" class="btn" type="button">Kiểm tra</button>
+        <button id="pc-forget" class="btn" type="button">Ngắt</button>
+      </div>
+    </div>
+    <div id="pc-help" class="muted pc-help" hidden></div>
 
     <!-- Chuyến đi mode, home: create a trip (plate first) and the trips of a day from every device (sheet chuyen_di). -->
     <section id="trip-home" class="trip-home" hidden>

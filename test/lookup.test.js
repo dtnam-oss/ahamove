@@ -1136,3 +1136,17 @@ test('đồng kiểm scan against the pending list: right warehouse "Có", other
   assert.equal(Lookup.pendingTotal(pending, 'Thuận Thành', ['GYE7M8RP', 'GYEOLD01']), 2);
   assert.equal(Lookup.pendingTotal(pending, 'Yên Phong', ['GYEGU8FU']), 1);
 });
+
+test('parsePcLink reads the pc-typer pairing hash and rejects malformed parts', () => {
+  const L = loadLookup();
+  assert.deepEqual({ ...L.parsePcLink('#pc=192.168.1.10%3A8443&key=ABCD2345') }, { pc: '192.168.1.10:8443', key: 'ABCD2345' });
+  assert.deepEqual({ ...L.parsePcLink('key=ABCD2345&pc=my-pc.local:8443') }, { pc: 'my-pc.local:8443', key: 'ABCD2345' });
+  assert.equal(L.parsePcLink(''), null);
+  assert.equal(L.parsePcLink('#pc=192.168.1.10&key=ABCD2345'), null, 'port required');
+  assert.equal(L.parsePcLink('#pc=evil.com%2Fx%3A1&key=ABCD2345'), null, 'no path in the host');
+  assert.equal(L.parsePcLink('#pc=1.2.3.4:8443&key=abcd2345'), null, 'key is upper case');
+  assert.equal(L.parsePcLink('#pc=1.2.3.4:8443&key=ABCD1234'), null, 'no 0/1 in the key alphabet');
+  assert.equal(L.parsePcLink('#pc=%E0%A4%A&key=ABCD2345'), null, 'bad escape');
+  assert.equal(L.validPcLink('1.2.3.4:8443', 'ABCD2345'), true);
+  assert.equal(L.validPcLink(null, 'ABCD2345'), false);
+});

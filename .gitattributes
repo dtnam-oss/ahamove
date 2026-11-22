@@ -1,0 +1,2 @@
+# pc-typer is zipped on Linux CI and run on Windows: keep Windows line endings in the shipped files.
+pc-typer/* text eol=crlf

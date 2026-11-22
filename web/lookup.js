@@ -377,7 +377,28 @@ var Lookup = (function () {
     return (index.routePoints && index.routePoints.get(routeName)) || [];
   }
 
+  /**
+   * Quét QR pairing with pc-typer on a Windows PC: '#pc=192.168.1.10%3A8443&key=ABCD2345' (the hash pc-typer
+   * redirects the phone to) -> {pc: '192.168.1.10:8443', key: 'ABCD2345'}; null when either part is malformed.
+   * The values build a URL and a request header, so only a plain host:port and the 8-character key pass.
+   */
+  function parsePcLink(hash) {
+    var params = {};
+    String(hash == null ? '' : hash).replace(/^#/, '').split('&').forEach(function (part) {
+      var eq = part.indexOf('=');
+      if (eq <= 0) return;
+      try { params[part.slice(0, eq)] = decodeURIComponent(part.slice(eq + 1)); } catch (e) { /* malformed escape */ }
+    });
+    return validPcLink(params.pc, params.key) ? { pc: params.pc, key: params.key } : null;
+  }
+
+  function validPcLink(pc, key) {
+    return /^[A-Za-z0-9.-]+:\d{1,5}$/.test(String(pc || '')) && /^[A-Z2-9]{8}$/.test(String(key || ''));
+  }
+
   return {
+    parsePcLink: parsePcLink,
+    validPcLink: validPcLink,
     normalizeText: normalizeText,
     normalizeCode: normalizeCode,
     isCancelled: isCancelled,

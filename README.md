@@ -145,6 +145,17 @@ Bấm **Kiểm kho** → chọn **ngày kiểm kho** → **Bắt đầu quét**.
 - Phiên đang quét được lưu trên máy (tải lại trang không mất); ghi lỗi thì phiên vẫn giữ để bấm Kết thúc lại.
 - `trang_thai`, `ket_qua` đi cùng dữ liệu chia chọn (bấm **Tải lại** sau khi sửa sheet). `raw_data` thiếu một trong hai cột thì thanh trạng thái báo "kiểm kho lỗi", các chế độ khác vẫn chạy.
 
+## Chế độ Quét QR (gõ vào máy tính)
+
+Điện thoại dùng như súng barcode cho máy tính Windows: quét mã ở tab **Quét QR** → máy tính gõ mã vào chỗ con trỏ (ô Excel, Google Sheet, Notepad…) rồi Enter để xuống dòng. Không tra dữ liệu, không ghi Google Sheets qua Apps Script: mã được gõ nguyên văn.
+
+- Máy tính chạy **pc-typer** (thư mục `pc-typer/`, tải sẵn dạng zip tại https://dtnam-oss.github.io/ahamove/pc-typer.zip — workflow đóng gói mỗi lần deploy). Chỉ cần Windows 10/11: PowerShell + .NET có sẵn, không cài gì. Hướng dẫn cho người dùng: `pc-typer/HUONG-DAN.txt`.
+- pc-typer mở server HTTPS cổng 8443 trong mạng LAN (chứng chỉ tự ký và mã kết nối 8 ký tự tạo ở lần chạy đầu, lưu trong kho chứng chỉ của user và `%LOCALAPPDATA%\pc-typer`). Cửa sổ pc-typer hiện địa chỉ `https://<IP>:8443/?key=<mã>`.
+- Ghép nối: mở địa chỉ đó trên điện thoại (cùng Wi-Fi) → chấp nhận cảnh báo chứng chỉ → trang tự chuyển về app với `#pc=<IP:port>&key=<mã>`, lưu trên điện thoại và mở tab Quét QR. Chrome hỏi quyền "thiết bị trong mạng cục bộ" thì bấm Cho phép.
+- Mỗi lần quét gửi `POST /type` (header `X-Key`); các mã được gửi lần lượt nên máy tính gõ đúng thứ tự quét. Không có mã kết nối thì máy khác trong mạng không gõ được gì; server chỉ gõ chữ in được (bỏ ký tự điều khiển), tối đa 200 ký tự.
+- Gõ bằng sự kiện phím Unicode nên Unikey/bộ gõ không làm biến dạng mã. Không gõ được vào chương trình chạy quyền Administrator.
+- Gửi lỗi (pc-typer tắt, khác Wi-Fi, chứng chỉ chưa được chấp nhận): màn hình đỏ "Ghi thất bại", đọc "Ghi thất bại", kèm đường dẫn để chấp nhận lại chứng chỉ — quét lại mã đó.
+
 ## Chế độ Chia tuyến
 
 Giống **Chia chọn** nhưng dùng tuyến thay cho khu vực: quét đơn → đọc to tuyến của đơn (vd "Tuyến 3"), màn hình hiện thêm phường/xã · quận/huyện. Tuyến lấy theo phường/xã trong địa chỉ, tra sheet `config_tuyen` (xem mục dưới).
@@ -215,8 +226,12 @@ gas/                  backend Apps Script
   trips.js            createTrip / endTrip / listTrips / openTrips: chuyến đi ở sheet chuyen_di
   scan-rounds.js      pendingPu (?action=pendingpu) / saveDongKiem / saveTraHang / saveKiemKho: danh sách chờ lấy; đơn nhận / trả / kiểm kho ở sheet data_dong_kiem / tra_hang / kiem_kho
   config.example.js   mẫu config — copy thành config.js (git-ignored)
+pc-typer/             chương trình cho máy tính Windows của chế độ Quét QR (đóng gói thành web/pc-typer.zip khi deploy)
+  start.cmd           bấm đúp để chạy
+  pc-typer.ps1        server HTTPS trong LAN + gõ phím (PowerShell, C# biên dịch khi chạy)
+  HUONG-DAN.txt       hướng dẫn cài đặt, kết nối điện thoại
 test/lookup.test.js   test logic tra cứu + backend
-.github/workflows/pages.yml   test + deploy web/ lên GitHub Pages
+.github/workflows/pages.yml   test + đóng gói pc-typer.zip + deploy web/ lên GitHub Pages
 ```
 
 ## Phát triển & triển khai

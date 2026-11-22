@@ -5,7 +5,8 @@
 // "Backlog" mode (speak the days left to the deadline from sheet back_log)
 // "Hàng hoàn" mode (speak the warehouse and the state of a returned order from sheet return)
 // "Chia tuyến" mode (speak the order's route from sheet config_tuyen, like "Chia chọn" does for areas)
-// and "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck).
+// "Tuyến" mode (pick routes from sheet config_tuyen, then check each order loaded onto the truck)
+// and "Quét QR" mode (send each scan to pc-typer on a Windows PC, which types it where the cursor is).
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var els = {
@@ -73,6 +74,12 @@
     mapBox: $('map-box'),
     mapNote: $('map-note'),
     map: $('order-map'),
+    pcProgress: $('pc-progress'),
+    pcLabel: $('pc-label'),
+    pcCount: $('pc-count'),
+    pcCheck: $('pc-check'),
+    pcForget: $('pc-forget'),
+    pcHelp: $('pc-help'),
   };
 
   var index = null;
@@ -84,6 +91,7 @@
   // | 'trahang' = returned orders
   // | 'backlog' = days left | 'route' = route check | 'return' = returned order warehouse + state
   // | 'kiemkho' = stock-check session: order state + deadline result from raw_data, saved to sheet kiem_kho
+  // | 'pctype' = Quét QR: type each scan into the focused cell on a paired Windows PC (pc-typer)
   var mode = 'sort';
   var orderPoints = {}; // code -> located point, so re-scanning an order needs no server call
 
@@ -185,6 +193,7 @@
   }
 
   function handleScan(raw) {
+    if (mode === 'pctype') { handlePcScan(raw); return; } // no lookup: the scanned text goes to the PC as is
     if (isRoundMode(mode)) { handleDkScan(raw); return; } // checks the code format only, no data needed
     if (!index) { speak('Chưa tải dữ liệu'); return; }
     if (mode === 'trip') { if (check && !els.checkProgress.hidden) handleCheckScan(raw); else handleTripScan(raw); return; }
@@ -210,6 +219,8 @@
     leaveRouteScreens();
     leaveTripScreens();
     leaveDkScreens();
+    leavePcScreens();
+    if (mode === 'pctype') { showPcScreen(); return; }
     if (mode === 'route') { if (index) showRouteScreen(); else showResult('idle', 'Chưa tải dữ liệu', ''); return; }
     if (mode === 'trip') { showTripScreen(); return; }
     if (isRoundMode(mode)) { showDkScreen(mode); return; }
@@ -1159,9 +1170,136 @@
     showDkSetup();
   });
 
+  // ---------- Quét QR mode: each scan is typed into the focused cell on a paired Windows PC ----------
+  // pc-typer (folder pc-typer/, shipped as pc-typer.zip) runs an HTTPS server on the PC; opening the address it
+  // shows sends the phone back here with '#pc=<host:port>&key=<key>', kept on this device.
+  var PC_LINK_KEY = 'pcTyper.v1';
+  var PC_TIMEOUT_MS = 5000;
+  var pcLink = null; // {pc: 'host:port', key} or null
+  var pcSent = 0; // codes typed since the page opened
+  var pcQueue = Promise.resolve(); // one request at a time, so the PC types the codes in scan order
+
+  function restorePcLink() {
+    var fromHash = Lookup.parsePcLink(location.hash);
+    if (fromHash) {
+      setPcLink(fromHash);
+      history.replaceState(null, '', location.pathname + location.search); // the key stays out of the address bar
+      return true;
+    }
+    try {
+      var saved = JSON.parse(localStorage.getItem(PC_LINK_KEY) || 'null');
+      if (saved && Lookup.validPcLink(saved.pc, saved.key)) pcLink = saved;
+    } catch (e) { /* corrupt or blocked: not paired */ }
+    return false;
+  }
+
+  function setPcLink(next) {
+    pcLink = next;
+    try {
+      if (next) localStorage.setItem(PC_LINK_KEY, JSON.stringify(next));
+      else localStorage.removeItem(PC_LINK_KEY);
+    } catch (e) { /* storage blocked: paired until the page is closed */ }
+  }
+
+  /** GET (body null) or POST text to pc-typer; resolves with its JSON, rejects with a message to show. */
+  function pcRequest(path, body) {
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = ctrl && setTimeout(function () { ctrl.abort(); }, PC_TIMEOUT_MS);
+    var opts = { method: body == null ? 'GET' : 'POST', headers: { 'X-Key': pcLink.key }, signal: ctrl ? ctrl.signal : undefined };
+    if (body != null) { opts.headers['Content-Type'] = 'text/plain;charset=utf-8'; opts.body = body; }
+    return fetch('https://' + pcLink.pc + path, opts)
+      .then(function (res) {
+        return res.json().then(function (json) {
+          if (!res.ok || json.error) throw new Error(json.error || 'HTTP ' + res.status);
+          return json;
+        });
+      }, function (err) {
+        throw new Error(err && err.name === 'AbortError' ? 'Máy tính không trả lời' : 'Không kết nối được máy tính');
+      })
+      .then(function (json) { clearTimeout(timer); return json; }, function (err) { clearTimeout(timer); throw err; });
+  }
+
+  function leavePcScreens() {
+    els.pcProgress.hidden = true;
+    els.pcHelp.hidden = true;
+  }
+
+  function showPcScreen() {
+    els.form.hidden = !pcLink;
+    els.result.hidden = !pcLink;
+    els.pcProgress.hidden = !pcLink;
+    if (!pcLink) { showPcHelp(); return; }
+    els.pcLabel.textContent = 'Máy tính ' + pcLink.pc;
+    updatePcCount();
+    checkPc();
+  }
+
+  function updatePcCount() { els.pcCount.textContent = pcSent + ' mã'; }
+
+  function checkPc() {
+    var link = pcLink;
+    els.pcHelp.hidden = true;
+    showResult('pending', 'Đang kết nối máy tính…', link.pc);
+    pcRequest('/ping').then(function (body) {
+      if (mode !== 'pctype' || pcLink !== link) return;
+      showResult('idle', 'Sẵn sàng quét', 'Đã kết nối ' + body.name + ' — bấm vào ô cần ghi trên máy tính');
+      focusInput();
+    }, function (err) {
+      if (mode !== 'pctype' || pcLink !== link) return;
+      showResult('error', 'Chưa kết nối được', errorText(err));
+      showPcHelp();
+    });
+  }
+
+  /** Not paired: how to install and pair. Paired but unreachable: the link that re-accepts the certificate. */
+  function showPcHelp() {
+    var box = els.pcHelp;
+    var link = function (text, href) { var a = el('a', '', text); a.href = href; return a; };
+    box.textContent = '';
+    if (!pcLink) {
+      box.appendChild(document.createTextNode('Chưa kết nối máy tính. Trên máy tính Windows: tải '));
+      box.appendChild(link('pc-typer.zip', 'pc-typer.zip'));
+      box.appendChild(document.createTextNode(', giải nén, bấm đúp start.cmd (xem HUONG-DAN.txt), rồi mở trên điện thoại địa chỉ hiện trong cửa sổ pc-typer.'));
+    } else {
+      box.appendChild(document.createTextNode('Kiểm tra cửa sổ pc-typer trên máy tính còn mở và điện thoại chung Wi-Fi, rồi mở '));
+      box.appendChild(link('https://' + pcLink.pc, 'https://' + pcLink.pc + '/?key=' + pcLink.key));
+      box.appendChild(document.createTextNode(' để chấp nhận lại chứng chỉ (Nâng cao → Tiếp tục).'));
+    }
+    box.hidden = false;
+  }
+
+  function handlePcScan(raw) {
+    var text = String(raw == null ? '' : raw).trim();
+    if (!text || !pcLink) return;
+    pcQueue = pcQueue.then(function () {
+      return pcRequest('/type', text).then(function () {
+        pcSent++;
+        if (mode !== 'pctype') return;
+        updatePcCount();
+        els.pcHelp.hidden = true;
+        showResult('ok', 'Đã ghi', 'Đã gõ vào máy tính · ' + pcSent + ' mã', text);
+        beep();
+      }, function (err) {
+        if (mode === 'pctype') {
+          showResult('error', 'Ghi thất bại', errorText(err) + ' — quét lại mã này', text);
+          showPcHelp();
+        }
+        speak('Ghi thất bại');
+      });
+    });
+  }
+
+  els.pcCheck.addEventListener('click', function () { if (pcLink) checkPc(); });
+  els.pcForget.addEventListener('click', function () {
+    if (!pcLink || !window.confirm('Ngắt kết nối máy tính ' + pcLink.pc + '?')) return;
+    setPcLink(null);
+    showPcScreen();
+  });
+
   restoreTripDraft();
   restoreCheck();
   restoreDk();
+  if (restorePcLink()) setMode('pctype'); // just paired: open the Quét QR tab
 
   function focusInput() {
     // Keep focus for the barcode gun, but not while the camera is open (avoids popping the mobile keyboard).

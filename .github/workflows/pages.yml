@@ -27,6 +27,8 @@ jobs:
         with:
           node-version: 20
       - run: npm test
+      # The PC side of "Quét QR", downloadable from the page as pc-typer.zip.
+      - run: cd pc-typer && zip -X -r ../web/pc-typer.zip .
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

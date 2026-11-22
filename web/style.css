@@ -59,8 +59,8 @@ html, body {
   font-size: 0.9rem;
 }
 
-.mode-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; } /* phones: 3 rows of 3 */
-@media (min-width: 640px) { .mode-bar { grid-template-columns: repeat(9, 1fr); } }
+.mode-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; } /* phones: 3 per row */
+@media (min-width: 640px) { .mode-bar { grid-template-columns: repeat(5, 1fr); } } /* 2 rows of 5 */
 .mode-btn { padding-left: 4px; padding-right: 4px; font-size: 0.85rem; }
 .mode-btn[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); font-weight: 700; }
 
@@ -234,3 +234,5 @@ html, body {
   .btn:active { transform: none; }
 }
 .dk-source { margin: 0 0 8px; }
+.pc-help { background: var(--panel); border-radius: 12px; padding: 10px 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.pc-help a { color: inherit; font-weight: 600; }

@@ -1,0 +1,39 @@
+PC-TYPER — QUÉT MÃ BẰNG ĐIỆN THOẠI, GÕ VÀO MÁY TÍNH
+====================================================
+
+Điện thoại quét mã ở tab "Quét QR" của trang https://dtnam-oss.github.io/ahamove/
+Máy tính (Windows 10/11) tự gõ mã vào chỗ con trỏ (ô Excel, Google Sheet, Notepad...)
+rồi bấm Enter để xuống dòng — giống súng barcode. Không cần cài thêm phần mềm.
+
+CÀI ĐẶT (mỗi máy tính làm một lần)
+1. Bấm chuột phải vào file pc-typer.zip → Properties (Thuộc tính) → tick "Unblock"
+   (Bỏ chặn) nếu có → OK. Sau đó giải nén ra một thư mục, ví dụ Desktop\pc-typer.
+2. Bấm đúp start.cmd.
+   - Nếu Windows báo "Windows protected your PC": bấm More info → Run anyway.
+   - Nếu tường lửa (Windows Security) hỏi quyền cho Windows PowerShell: tick
+     "Private networks" (Mạng riêng) → Allow access. Máy cần quyền quản trị để bấm Allow.
+3. Cửa sổ pc-typer hiện địa chỉ dạng  https://192.168.1.10:8443/?key=ABCD2345
+
+KẾT NỐI ĐIỆN THOẠI (lần đầu, hoặc khi đổi Wi-Fi / đổi máy)
+1. Điện thoại và máy tính dùng chung một mạng Wi-Fi.
+2. Trên điện thoại, mở Chrome và gõ đúng địa chỉ trong cửa sổ pc-typer.
+3. Trình duyệt báo "Kết nối của bạn không phải là kết nối riêng tư": bấm Nâng cao →
+   Tiếp tục truy cập (chứng chỉ do chính máy tính này tạo, không phải lỗi).
+4. Trang tự chuyển về app, mở tab "Quét QR" và kết nối máy tính. Nếu Chrome hỏi
+   "truy cập thiết bị trong mạng cục bộ" thì bấm Cho phép.
+
+SỬ DỤNG HẰNG NGÀY
+1. Bấm đúp start.cmd trên máy tính, giữ cửa sổ pc-typer mở.
+2. Bấm vào ô cần ghi trên máy tính (ví dụ A2 trong Excel).
+3. Trên điện thoại mở tab "Quét QR", quét mã: mã hiện vào ô A2, con trỏ xuống A3...
+   Mỗi mã cũng hiện trong cửa sổ pc-typer kèm giờ quét.
+
+LƯU Ý
+- Mã chỉ được gõ vào cửa sổ đang được chọn trên máy tính: đừng bấm sang cửa sổ khác khi quét.
+- Không gõ được vào chương trình chạy bằng quyền Administrator (trừ khi pc-typer cũng chạy
+  bằng quyền đó).
+- Mã kết nối và chứng chỉ được lưu trên máy (thư mục %LOCALAPPDATA%\pc-typer và kho chứng chỉ
+  của người dùng), nên lần sau không phải kết nối lại — trừ khi địa chỉ IP của máy đổi.
+- Điện thoại báo "Không kết nối được máy tính": kiểm tra cửa sổ pc-typer còn mở, chung Wi-Fi,
+  rồi bấm đường dẫn hiện trên tab "Quét QR" để chấp nhận lại chứng chỉ.
+- Cổng 8443 đang được dùng: pc-typer đã chạy ở cửa sổ khác — dùng cửa sổ đó.
