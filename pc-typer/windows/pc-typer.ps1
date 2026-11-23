@@ -30,16 +30,34 @@ if ($Key -notmatch '^[A-Z2-9]{8}$') {
   Set-Content -Path $KeyFile -Value $Key -Encoding ASCII
 }
 
+# ---------- Địa chỉ trong mạng LAN (card mạng đang có gateway, tức Wi-Fi/LAN thật) ----------
+$ips = @(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
+  ForEach-Object { $_.IPv4Address.IPAddress })
+if (-not $ips.Count) {
+  $ips = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+    ForEach-Object { $_.IPAddress })
+}
+
 # ---------- Chứng chỉ HTTPS tự ký trong kho của người dùng hiện tại, tự gia hạn trước khi hết hạn ----------
+# iPhone (iOS 13+) chỉ cho "truy cập trang web này" khi chứng chỉ có Subject Alternative Name: ghi tên pc-typer
+# và các địa chỉ LAN ở trên. Đổi Wi-Fi/IP thì chứng chỉ được tạo lại cho khớp địa chỉ mới.
+function Test-CertCoversIps($c) {
+  $san = $c.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.17' }
+  if (-not $san) { return $false }
+  $text = $san.Format($false)
+  foreach ($ip in $ips) { if ($text -notmatch ('(^|[^\d.])' + [regex]::Escape($ip) + '($|[^\d.])')) { return $false } }
+  return $true
+}
 $Cert = Get-ChildItem Cert:\CurrentUser\My |
-  Where-Object { $_.FriendlyName -eq 'pc-typer' -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(7) } |
+  Where-Object { $_.FriendlyName -eq 'pc-typer' -and $_.HasPrivateKey -and $_.NotAfter -gt (Get-Date).AddDays(7) -and (Test-CertCoversIps $_) } |
   Sort-Object NotAfter -Descending | Select-Object -First 1
 if (-not $Cert) {
   Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.FriendlyName -eq 'pc-typer' } | Remove-Item
+  $san = (@('DNS=pc-typer') + @($ips | ForEach-Object { "IPAddress=$_" })) -join '&'
   $Cert = New-SelfSignedCertificate -Subject 'CN=pc-typer' -FriendlyName 'pc-typer' `
     -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddDays(397) `
     -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyUsage DigitalSignature, KeyEncipherment `
-    -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.1')
+    -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.1', "2.5.29.17={text}$san")
 }
 
 # ---------- Server + gõ phím (C#, biên dịch khi chạy) ----------
@@ -242,20 +260,13 @@ public static class PcTyper {
 [PcTyper]::Name = $env:COMPUTERNAME
 [PcTyper]::Cert = $Cert
 
-# ---------- Địa chỉ trong mạng LAN (card mạng đang có gateway, tức Wi-Fi/LAN thật) ----------
-$ips = @(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
-  ForEach-Object { $_.IPv4Address.IPAddress })
-if (-not $ips.Count) {
-  $ips = @(Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-    ForEach-Object { $_.IPAddress })
-}
-
 Write-Host ''
 Write-Host ' pc-typer đang chạy trên máy' $env:COMPUTERNAME -ForegroundColor Green
 Write-Host ''
 Write-Host ' 1. Trên điện thoại (cùng Wi-Fi với máy này), mở địa chỉ:'
 foreach ($ip in $ips) { Write-Host ("      https://{0}:{1}/?key={2}" -f $ip, $Port, $Key) -ForegroundColor Yellow }
-Write-Host '    Lần đầu trình duyệt báo "Kết nối không riêng tư": bấm Nâng cao → Tiếp tục truy cập.'
+Write-Host '    Lần đầu trình duyệt báo "Kết nối không riêng tư": bấm Nâng cao → Tiếp tục truy cập'
+Write-Host '    (iPhone/Safari: bấm "truy cập trang web này" → Truy cập trang web).'
 Write-Host '    Trang sẽ tự chuyển về app, tab "Quét QR".'
 Write-Host ' 2. Trên máy tính, bấm vào ô Excel / Google Sheet cần ghi.'
 Write-Host ' 3. Quét mã trên điện thoại: mã được gõ vào ô đó rồi xuống dòng.'

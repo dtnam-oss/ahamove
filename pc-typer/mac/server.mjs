@@ -130,17 +130,32 @@ export function loadKey(dir) {
   return key;
 }
 
-/** Self-signed HTTPS certificate (openssl ships with macOS), renewed when it ends within 7 days. */
-export function ensureCert(dir, run = execFileSync) {
+/**
+ * Self-signed HTTPS certificate (openssl ships with macOS), renewed when it ends within 7 days or does not list
+ * every current LAN address. iPhones (iOS 13+) only let "visit this website" through when the certificate has a
+ * Subject Alternative Name and the serverAuth usage, so both are always written (through a config file: the
+ * LibreSSL of older macOS has no -addext).
+ */
+export function ensureCert(dir, ips, run = execFileSync) {
   const certFile = path.join(dir, 'cert.pem');
   const keyFile = path.join(dir, 'key.pem');
   try {
     const pem = fs.readFileSync(certFile);
-    if (new Date(new crypto.X509Certificate(pem).validTo) - Date.now() > 7 * 864e5) {
+    const x509 = new crypto.X509Certificate(pem);
+    const names = (x509.subjectAltName || '').split(', ');
+    if (new Date(x509.validTo) - Date.now() > 7 * 864e5 && ips.every((ip) => names.includes('IP Address:' + ip))) {
       return { cert: pem, key: fs.readFileSync(keyFile) };
     }
   } catch { /* missing or unreadable: make a new one */ }
-  run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '397', '-subj', '/CN=pc-typer',
+  const configFile = path.join(dir, 'openssl.cnf');
+  fs.writeFileSync(configFile, [
+    '[req]', 'prompt = no', 'distinguished_name = dn', 'x509_extensions = ext',
+    '[dn]', 'CN = pc-typer',
+    '[ext]', 'basicConstraints = critical, CA:FALSE', 'keyUsage = critical, digitalSignature, keyEncipherment',
+    'extendedKeyUsage = serverAuth', 'subjectAltName = ' + ['DNS:pc-typer', ...ips.map((ip) => 'IP:' + ip)].join(', '),
+    '',
+  ].join('\n'));
+  run('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '397', '-config', configFile,
     '-keyout', keyFile, '-out', certFile], { stdio: 'ignore' });
   fs.chmodSync(keyFile, 0o600);
   return { cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) };
@@ -157,7 +172,8 @@ function main() {
   const dir = stateDir();
   fs.mkdirSync(dir, { recursive: true });
   const key = loadKey(dir);
-  const tls = ensureCert(dir);
+  const ips = lanAddresses();
+  const tls = ensureCert(dir, ips);
   const name = os.hostname().replace(/\.local$/, '');
   const server = https.createServer(tls, createHandler({ key, name, type: macTyper() }));
   server.on('error', (err) => {
@@ -169,8 +185,9 @@ function main() {
   server.listen(PORT, () => {
     console.log(`\n pc-typer đang chạy trên máy ${name}\n`);
     console.log(' 1. Trên điện thoại (cùng Wi-Fi với máy này), mở địa chỉ:');
-    for (const ip of lanAddresses()) console.log(`      https://${ip}:${PORT}/?key=${key}`);
-    console.log('    Lần đầu trình duyệt báo "Kết nối không riêng tư": bấm Nâng cao → Tiếp tục truy cập.');
+    for (const ip of ips) console.log(`      https://${ip}:${PORT}/?key=${key}`);
+    console.log('    Lần đầu trình duyệt báo "Kết nối không riêng tư": bấm Nâng cao → Tiếp tục truy cập');
+    console.log('    (iPhone/Safari: bấm "truy cập trang web này" → Truy cập trang web).');
     console.log('    Trang sẽ tự chuyển về app, tab "Quét QR".');
     console.log(' 2. Trên máy Mac, bấm vào ô Excel / Numbers / Google Sheet cần ghi.');
     console.log(' 3. Quét mã trên điện thoại: mã được gõ vào ô đó rồi xuống dòng.');

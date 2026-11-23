@@ -37,12 +37,17 @@ CÀI ĐẶT TRÊN MAC (mỗi máy làm một lần)
 
 KẾT NỐI ĐIỆN THOẠI (lần đầu, hoặc khi đổi Wi-Fi / đổi máy)
 1. Điện thoại và máy tính dùng chung một mạng Wi-Fi.
-2. Trên điện thoại, mở Chrome và gõ đúng địa chỉ trong cửa sổ pc-typer (cả https:// và ?key=...).
-3. Trình duyệt báo "Kết nối của bạn không phải là kết nối riêng tư": bấm Nâng cao →
-   Tiếp tục truy cập (chứng chỉ do chính máy tính này tạo, không phải lỗi).
-4. Trang tự chuyển về app, mở tab "Quét QR". Bấm "Bắt đầu ca". Nếu Chrome hỏi
-   "truy cập thiết bị trong mạng cục bộ" thì bấm Cho phép.
+2. Trên điện thoại mở trình duyệt (Android: Chrome; iPhone: Safari) và gõ đúng địa chỉ trong
+   cửa sổ pc-typer (cả https:// và ?key=...).
+3. Trình duyệt báo kết nối không riêng tư (chứng chỉ do chính máy tính này tạo, không phải lỗi):
+   - Android/Chrome: bấm Nâng cao → Tiếp tục truy cập.
+   - iPhone/Safari: bấm dòng "truy cập trang web này" → Truy cập trang web.
+4. Trang tự chuyển về app, mở tab "Quét QR". Bấm "Bắt đầu ca", cho phép dùng Camera. Nếu Chrome
+   hỏi "truy cập thiết bị trong mạng cục bộ" thì bấm Cho phép.
 5. Màn hình hiện "Đã kết nối <tên máy>" là xong.
+
+iPhone: dùng tab Safari (có thể lưu dấu trang), không dùng "Thêm vào MH chính". Nếu dùng Chrome
+trên iPhone: Cài đặt → Chrome → bật "Mạng cục bộ".
 
 
 SỬ DỤNG HẰNG NGÀY

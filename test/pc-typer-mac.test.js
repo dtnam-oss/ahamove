@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -123,14 +124,24 @@ const OPENSSL = ['openssl', 'C:/Program Files/Git/usr/bin/openssl.exe'].find((bi
   try { execFileSync(bin, ['version'], { stdio: 'ignore' }); return true; } catch { return false; }
 });
 
-test('ensureCert makes a self-signed certificate once and serves real TLS', { skip: !OPENSSL && 'openssl not found' }, async () => {
+test('ensureCert makes an iPhone-acceptable certificate once, renews it for a new IP, serves real TLS', { skip: !OPENSSL && 'openssl not found' }, async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pc-typer-'));
   const run = (cmd, args, opts) => execFileSync(OPENSSL, args, opts);
   try {
-    const tls = ensureCert(dir, run);
+    const tls = ensureCert(dir, ['192.168.1.48'], run);
+    const x509 = new crypto.X509Certificate(tls.cert);
+    // iOS 13+ needs a Subject Alternative Name and the serverAuth usage, or "visit this website" does nothing.
+    assert.equal(x509.subjectAltName, 'DNS:pc-typer, IP Address:192.168.1.48');
+    assert.equal(x509.ca, false);
+    assert.ok(new Date(x509.validTo) - Date.now() <= 398 * 864e5);
+    const text = execFileSync(OPENSSL, ['x509', '-noout', '-text', '-in', path.join(dir, 'cert.pem')], { encoding: 'utf8' });
+    assert.match(text, /TLS Web Server Authentication/);
     let reran = false;
-    assert.deepEqual(ensureCert(dir, () => { reran = true; }), tls, 'valid certificate is reused');
+    assert.deepEqual(ensureCert(dir, ['192.168.1.48'], () => { reran = true; }), tls, 'valid certificate is reused');
     assert.equal(reran, false);
+    const moved = ensureCert(dir, ['192.168.1.48', '10.0.0.5'], run);
+    assert.equal(new crypto.X509Certificate(moved.cert).subjectAltName, 'DNS:pc-typer, IP Address:192.168.1.48, IP Address:10.0.0.5',
+      'a new LAN address gets a new certificate');
     const server = https.createServer(tls, createHandler({ key: KEY, name: 'TLS-MAC', type: () => Promise.resolve(), log() {} }));
     await new Promise((r) => server.listen(0, '127.0.0.1', r));
     try {
