@@ -92,8 +92,10 @@ function loadServer(tables, geo = {}) {
     const body = JSON.parse(opts.payload);
     if (method === 'sendMessage') telegram.push(body);
     else telegramCalls.push({ method, body });
-    const fail = geo.telegramError;
-    const result = method === 'getWebhookInfo' ? (geo.webhookInfo || {}) : true;
+    // geo.failMethods: methods answered with an API error (e.g. pinning without admin rights).
+    const fail = geo.telegramError || ((geo.failMethods || []).includes(method) && 'Bad Request: ' + method + ' failed');
+    const sent = method === 'sendMessage' || method === 'sendAnimation';
+    const result = method === 'getWebhookInfo' ? (geo.webhookInfo || {}) : sent ? { message_id: 100 + telegram.length + telegramCalls.length } : true;
     return {
       getResponseCode: () => (fail ? 400 : 200),
       getContentText: () => JSON.stringify(fail ? { ok: false, description: fail } : { ok: true, result }),
@@ -142,6 +144,8 @@ function loadServer(tables, geo = {}) {
   };
   const cacheStore = {};
   const CacheService = { getScriptCache: () => ({ get: (k) => cacheStore[k] || null, put: (k, v) => { cacheStore[k] = v; } }) };
+  const props = {};
+  const PropertiesService = { getScriptProperties: () => ({ getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); } }) };
   const ContentService = {
     MimeType: { JSON: 'json' },
     createTextOutput: (text) => ({ text, setMimeType(m) { this.mime = m; return this; } }),
@@ -149,7 +153,7 @@ function loadServer(tables, geo = {}) {
   const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
   const ctx = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, UrlFetchApp, Utilities, console, geocoded,
-    telegram, telegramCalls, ScriptApp, triggers, CacheService,
+    telegram, telegramCalls, ScriptApp, triggers, CacheService, PropertiesService, props,
   });
   const telegramOn = geo.telegramOff ? (s) => s : (s) => s.replace("TELEGRAM_BOT_TOKEN = ''", "TELEGRAM_BOT_TOKEN = 'test-token'")
     .replace("TELEGRAM_CHAT_ID = ''", `TELEGRAM_CHAT_ID = '${geo.chatId || '-100test'}'`);
@@ -1212,17 +1216,13 @@ test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" as code - da
   server.guiCanhBaoBacklog();
   assert.deepEqual(texts(server), [BACKLOG_TEXT]);
   assert.equal(server.telegram[0].chat_id, '-100test');
-  assert.deepEqual(server.triggers.map((t) => t.handler), ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon']);
-  // Each one-time trigger is at 13:00, 19:00 or 23:00 Vietnam time, within the next day.
-  const vnHour = (d) => new Date(d.getTime() + 7 * 3600e3).getUTCHours();
-  assert.deepEqual(server.triggers.map((t) => vnHour(t.at)), [13, 19, 23]);
-  server.triggers.forEach((t) => {
-    assert.equal(t.at.getUTCMinutes() + t.at.getUTCSeconds(), 0);
-    assert.ok(t.at > Date.now() && t.at - Date.now() <= 864e5);
-  });
+  assert.deepEqual(server.triggers.map((t) => t.handler), ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon', 'nhacLaiNeuChuaCapNhat']);
+  // Each one-time trigger is at 13:00, 19:00, 23:00 or 23:30 Vietnam time, within the next day.
+  const vnTime = (d) => new Date(d.getTime() + 7 * 3600e3).toISOString().slice(11, 19);
+  assert.deepEqual(server.triggers.map((t) => vnTime(t.at)), ['13:00:00', '19:00:00', '23:00:00', '23:30:00']);
+  server.triggers.forEach((t) => assert.ok(t.at > Date.now() && t.at - Date.now() <= 864e5));
   server.guiNhacCapNhatDon();
-  assert.equal(texts(server)[1], 'Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605');
-  assert.equal(server.triggers.length, 3, 'runs re-plan instead of piling up triggers');
+  assert.equal(server.triggers.length, 4, 'runs re-plan instead of piling up triggers');
 
   // Empty groups say so; a sheet problem is reported to the group instead of failing silently.
   const none = loadServer({ raw_data: DATA, config: CONFIG, back_log: [BACK_LOG[0], BACK_LOG[3]] });
@@ -1231,7 +1231,7 @@ test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" as code - da
   const broken = loadServer({ raw_data: DATA, config: CONFIG, back_log: [['tracking_number', 'Partner']] });
   broken.guiCanhBaoBacklog();
   assert.match(texts(broken)[0], /^Không đọc được dữ liệu: Sheet "back_log" thiếu cột Nhóm hạn/);
-  assert.equal(broken.triggers.length, 3, 'the next runs are planned even after an error');
+  assert.equal(broken.triggers.length, 4, 'the next runs are planned even after an error');
 });
 
 test('a long backlog alert is split under the Telegram limit and the section goes on with "(tiếp)"', () => {
@@ -1258,6 +1258,66 @@ test('nextVnTime_ picks today or tomorrow in Vietnam time, never within the next
   assert.equal(at('2026-11-23T17:30:00Z', 13), '2026-11-24T06:00:00.000Z', '00:30 Vietnam time is already the 24th');
   assert.equal(at('2026-11-23T15:59:00Z', 23), '2026-11-24T16:00:00.000Z');
   assert.equal(at('2026-11-23T15:58:00Z', 23), '2026-11-23T16:00:00.000Z');
+  assert.equal(server.nextVnTime_(23, new Date('2026-11-23T16:00:20Z'), 30).toISOString(), '2026-11-23T16:30:00.000Z', '23:30 right after 23:00');
+});
+
+const REMINDER_CAPTION = '⏰ <b>NHẮC 23:00 — CẬP NHẬT ĐƠN HÀNG LẤY</b>\nBố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605';
+const calls = (server, method) => server.telegramCalls.filter((c) => c.method === method).map((c) => plain(c.body));
+
+test('23:00 reminder: GIF + bold caption with mentions and a button, pinned with a notification in place of the last one', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG });
+  server.guiNhacCapNhatDon();
+  assert.deepEqual(calls(server, 'sendAnimation'), [{
+    chat_id: '-100test', animation: 'https://dtnam-oss.github.io/ahamove/reminder-alarm.gif', caption: REMINDER_CAPTION,
+    parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: '✅ Đã cập nhật', callback_data: 'remind_ok' }]] },
+  }]);
+  const first = JSON.parse(server.props.telegramReminder);
+  assert.deepEqual(calls(server, 'pinChatMessage'), [{ chat_id: '-100test', message_id: first.messageId, disable_notification: false }]);
+  assert.deepEqual(calls(server, 'unpinChatMessage'), []);
+  assert.deepEqual([first.kind, first.confirmed], ['animation', []]);
+  assert.match(first.day, /^\d\d\/\d\d\/\d{4}$/);
+
+  server.guiNhacCapNhatDon(); // next day: yesterday's reminder is unpinned
+  assert.deepEqual(calls(server, 'unpinChatMessage'), [{ chat_id: '-100test', message_id: first.messageId }]);
+  assert.equal(server.triggers.length, 4);
+
+  // GIF refused: the same caption goes as a text message; pinning without admin rights does not stop it.
+  const text = loadServer({ raw_data: DATA, config: CONFIG }, { failMethods: ['sendAnimation', 'pinChatMessage'] });
+  text.guiNhacCapNhatDon();
+  assert.equal(texts(text)[0], REMINDER_CAPTION);
+  assert.equal(text.telegram[0].parse_mode, 'HTML');
+  assert.equal(JSON.parse(text.props.telegramReminder).kind, 'text');
+  assert.equal(calls(text, 'pinChatMessage').length, 1);
+  assert.equal(plain(text.sendReminder_()).pin, 'lỗi: Bad Request: pinChatMessage failed');
+});
+
+test('"✅ Đã cập nhật" adds who confirmed to the reminder; nobody by 23:30 → a second reminder with the mentions', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG }, { chatId: '-100' });
+  const group = { id: -100 };
+  server.guiNhacCapNhatDon();
+  const id = JSON.parse(server.props.telegramReminder).messageId;
+
+  server.nhacLaiNeuChuaCapNhat(); // nobody pressed yet
+  assert.equal(texts(server)[0], '⏰ <b>NHẮC LẦN 2</b> — chưa ai bấm "✅ Đã cập nhật".\nBố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605');
+  assert.deepEqual(plain(server.telegram[0].reply_parameters), { message_id: id, allow_sending_without_reply: true });
+
+  const press = (update_id, from, messageId = id) => tgPost(server, {
+    update_id, callback_query: { id: 'cb' + update_id, data: 'remind_ok', from, message: { chat: group, message_id: messageId } },
+  });
+  press(1, { id: 7, first_name: 'Văn', last_name: '<Kiên>' });
+  const edits = calls(server, 'editMessageCaption');
+  assert.equal(edits.length, 1);
+  assert.match(edits[0].caption, new RegExp('^' + REMINDER_CAPTION.replace(/[|()]/g, '\\$&') + '\n✅ <b>Văn &lt;Kiên&gt;</b> đã cập nhật lúc \\d\\d:\\d\\d$'));
+  assert.deepEqual(edits[0].reply_markup.inline_keyboard[0][0].callback_data, 'remind_ok', 'the button stays for the other person');
+  press(2, { id: 7, first_name: 'Văn' });
+  press(3, { id: 8, first_name: 'Quân' }, 999);
+  const answers = calls(server, 'answerCallbackQuery').map((a) => a.text);
+  assert.deepEqual(answers, ['Đã ghi nhận, cảm ơn!', 'Bạn đã xác nhận rồi.', 'Tin nhắc này đã cũ.']);
+  assert.equal(calls(server, 'editMessageCaption').length, 1);
+
+  server.nhacLaiNeuChuaCapNhat(); // confirmed: no second reminder
+  assert.equal(server.telegram.length, 1);
+  assert.equal(server.triggers.length, 4);
 });
 
 test('group commands and buttons: /menu shows Backlog | Kiểm kho, buttons and commands send the lists', () => {
@@ -1298,10 +1358,10 @@ test('caiDatTelegram schedules the messages, the daily re-plan, the webhook and 
   const r = plain(server.caiDatTelegram());
   assert.equal(r.webhook, 'ok');
   assert.equal(r.lenh, 'ok');
-  assert.equal(r.lich.length, 3);
+  assert.equal(r.lich.length, 4);
   server.caiDatTelegram();
   const handlers = server.triggers.map((t) => t.handler).sort();
-  assert.deepEqual(handlers, ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon', 'lapLichTelegram']);
+  assert.deepEqual(handlers, ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon', 'lapLichTelegram', 'nhacLaiNeuChuaCapNhat']);
   assert.deepEqual(plain(server.triggers.find((t) => t.handler === 'lapLichTelegram').daily), { hour: 3, tz: 'Asia/Ho_Chi_Minh' });
 
   const hook = plain(server.telegramCalls.find((c) => c.method === 'setWebhook').body);

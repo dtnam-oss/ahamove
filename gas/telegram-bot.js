@@ -1,6 +1,8 @@
 // Telegram group bot (same bot + group as the Đồng kiểm notice, see telegram.js):
 // - 13:00 and 19:00: backlog alert = orders of sheet back_log whose "Nhóm hạn" is "Đến hạn hôm nay" or "Quá hạn".
-// - 23:00: reminder to update the picked-up orders, mentioning the two people in charge.
+// - 23:00: reminder to update the picked-up orders (GIF + bold caption mentioning the two people in charge,
+//   pinned with a notification, "✅ Đã cập nhật" button); 23:30: reminded again when nobody pressed the button.
+//   Pinning needs the bot to be a group admin allowed to pin messages.
 // - Commands in the group: /menu shows the Backlog | Kiểm kho buttons, /backlog and /kiemkho answer directly.
 //   Kiểm kho = orders of raw_data grouped by trang_thai (orders without a state are left out).
 //
@@ -20,12 +22,20 @@ const BACKLOG_ALERT_GROUPS = ['Đến hạn hôm nay', 'Quá hạn']; // message
 // Emoji in front of each section title, so the titles stand out from the order lines.
 const BACKLOG_GROUP_ICONS = { 'Đến hạn hôm nay': '🟡', 'Quá hạn': '🔴' };
 const STATE_ICON = '📦';
-const UPDATE_REMINDER = 'Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605';
+// 23:00 reminder: an alarm-clock GIF (web/reminder-alarm.gif on GitHub Pages) with a bold caption, the two people
+// mentioned, a "✅ Đã cập nhật" button, pinned with a notification. Nobody pressed it by 23:30 → a second reminder.
+const REMINDER_MENTIONS = '@VanKien0902 @Quanle0605';
+const UPDATE_REMINDER = 'Bố Kiên | Bố Quân cập nhật đơn hàng lấy ' + REMINDER_MENTIONS;
+const REMINDER_TITLE = '⏰ <b>NHẮC 23:00 — CẬP NHẬT ĐƠN HÀNG LẤY</b>';
+const REMINDER_GIF_URL = 'https://dtnam-oss.github.io/ahamove/reminder-alarm.gif';
+const REMINDER_BUTTON = { inline_keyboard: [[{ text: '✅ Đã cập nhật', callback_data: 'remind_ok' }]] };
+const REMINDER_STATE_KEY = 'telegramReminder'; // script property: {day, messageId, kind, confirmed: [{id, name, at}]}
 
 const TELEGRAM_SCHEDULE = [
   { handler: 'guiCanhBaoBacklog', hour: 13 },
   { handler: 'guiCanhBaoBacklog', hour: 19 },
   { handler: 'guiNhacCapNhatDon', hour: 23 },
+  { handler: 'nhacLaiNeuChuaCapNhat', hour: 23, minute: 30 },
 ];
 const TELEGRAM_REPLAN_HOUR = 3;
 const VN_OFFSET_MS = 7 * 3600e3; // Asia/Ho_Chi_Minh, no daylight saving
@@ -123,13 +133,106 @@ function guiCanhBaoBacklog() {
 }
 
 function guiNhacCapNhatDon() {
-  try { sendTelegram_(UPDATE_REMINDER); } finally { lapLichTelegram(); }
+  try { sendReminder_(); } finally { lapLichTelegram(); }
 }
 
-/** The next time `hour`:00 Vietnam time comes, at least a minute after `now` (Date). */
-function nextVnTime_(hour, now) {
+/** 23:30: remind again (replying to the 23:00 message) when nobody pressed "✅ Đã cập nhật" today. */
+function nhacLaiNeuChuaCapNhat() {
+  try {
+    const state = loadReminder_();
+    if (!state || state.day !== vnDay_() || state.confirmed.length) return;
+    sendTelegram_('⏰ <b>NHẮC LẦN 2</b> — chưa ai bấm "✅ Đã cập nhật".\n' + escapeHtml_(UPDATE_REMINDER), {
+      parse_mode: 'HTML',
+      reply_parameters: { message_id: state.messageId, allow_sending_without_reply: true },
+    });
+  } finally {
+    lapLichTelegram();
+  }
+}
+
+function escapeHtml_(text) {
+  return String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function vnDay_() {
+  return Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy');
+}
+
+function loadReminder_() {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(REMINDER_STATE_KEY) || 'null'); } catch (e) { return null; }
+}
+
+function saveReminder_(state) {
+  PropertiesService.getScriptProperties().setProperty(REMINDER_STATE_KEY, JSON.stringify(state));
+}
+
+/** Caption of the reminder: title, the reminder line, then who confirmed and when. */
+function reminderCaption_(confirmed) {
+  return [REMINDER_TITLE, escapeHtml_(UPDATE_REMINDER)].concat(confirmed.map(function (c) {
+    return '✅ <b>' + escapeHtml_(c.name) + '</b> đã cập nhật lúc ' + c.at;
+  })).join('\n');
+}
+
+/**
+ * Send the reminder as GIF + caption (plain message if the GIF cannot be sent), pin it with a notification in
+ * place of yesterday's, and remember it for the button and the 23:30 check. Returns {send, pin}.
+ */
+function sendReminder_() {
+  const chat = telegramConfig_().chat;
+  const caption = reminderCaption_([]);
+  let kind = 'animation';
+  let sent = telegramApi_('sendAnimation', {
+    chat_id: chat, animation: REMINDER_GIF_URL, caption: caption, parse_mode: 'HTML', reply_markup: REMINDER_BUTTON,
+  });
+  if (sent.status !== 'ok' && sent.status !== 'off') {
+    kind = 'text';
+    sent = telegramApi_('sendMessage', {
+      chat_id: chat, text: caption, parse_mode: 'HTML', reply_markup: REMINDER_BUTTON, disable_web_page_preview: true,
+    });
+  }
+  if (sent.status !== 'ok') return { send: sent.status };
+  const previous = loadReminder_();
+  if (previous && previous.messageId) telegramApi_('unpinChatMessage', { chat_id: chat, message_id: previous.messageId });
+  const pin = telegramApi_('pinChatMessage', { chat_id: chat, message_id: sent.result.message_id, disable_notification: false }).status;
+  saveReminder_({ day: vnDay_(), messageId: sent.result.message_id, kind: kind, confirmed: [] });
+  return { send: 'ok', pin: pin };
+}
+
+/** "✅ Đã cập nhật" pressed: add the person (once) to the reminder caption; stops the 23:30 reminder. */
+function confirmReminder_(cb) {
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const state = loadReminder_();
+    if (!state || state.messageId !== cb.message.message_id) {
+      telegramApi_('answerCallbackQuery', { callback_query_id: cb.id, text: 'Tin nhắc này đã cũ.' });
+      return;
+    }
+    if (state.confirmed.some(function (c) { return c.id === cb.from.id; })) {
+      telegramApi_('answerCallbackQuery', { callback_query_id: cb.id, text: 'Bạn đã xác nhận rồi.' });
+      return;
+    }
+    const name = [cb.from.first_name, cb.from.last_name].filter(Boolean).join(' ') || cb.from.username || 'Ai đó';
+    state.confirmed.push({ id: cb.from.id, name: name, at: Utilities.formatDate(new Date(), 'Asia/Ho_Chi_Minh', 'HH:mm') });
+    saveReminder_(state);
+    const edit = { chat_id: telegramConfig_().chat, message_id: state.messageId, parse_mode: 'HTML', reply_markup: REMINDER_BUTTON };
+    if (state.kind === 'animation') {
+      edit.caption = reminderCaption_(state.confirmed);
+      telegramApi_('editMessageCaption', edit);
+    } else {
+      edit.text = reminderCaption_(state.confirmed);
+      telegramApi_('editMessageText', edit);
+    }
+    telegramApi_('answerCallbackQuery', { callback_query_id: cb.id, text: 'Đã ghi nhận, cảm ơn!' });
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** The next time `hour`:`minute` Vietnam time comes, at least a minute after `now` (Date). */
+function nextVnTime_(hour, now, minute) {
   const vn = new Date(now.getTime() + VN_OFFSET_MS);
-  let at = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), hour) - VN_OFFSET_MS;
+  let at = Date.UTC(vn.getUTCFullYear(), vn.getUTCMonth(), vn.getUTCDate(), hour, minute || 0) - VN_OFFSET_MS;
   if (at <= now.getTime() + 60e3) at += 864e5;
   return new Date(at);
 }
@@ -146,7 +249,7 @@ function lapLichTelegram() {
     });
     const now = new Date();
     return TELEGRAM_SCHEDULE.map(function (s) {
-      const at = nextVnTime_(s.hour, now);
+      const at = nextVnTime_(s.hour, now, s.minute);
       ScriptApp.newTrigger(s.handler).timeBased().at(at).create();
       return s.handler + ' ' + Utilities.formatDate(at, 'Asia/Ho_Chi_Minh', 'dd/MM/yyyy HH:mm');
     });
@@ -183,6 +286,7 @@ function handleTelegramUpdate_(update) {
   const cb = update.callback_query;
   if (cb) {
     if (!cb.message || String(cb.message.chat.id) !== chat) return;
+    if (cb.data === 'remind_ok') { confirmReminder_(cb); return; }
     telegramApi_('answerCallbackQuery', { callback_query_id: cb.id });
     runTelegramAction_(cb.data);
     return;

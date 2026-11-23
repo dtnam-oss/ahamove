@@ -220,7 +220,9 @@ Cùng bot và nhóm với thông báo Đồng kiểm (`TELEGRAM_BOT_TOKEN`, `TEL
   ```
   Tiêu đề nhóm trạng thái của Kiểm kho có 📦 phía trước.
   Nhóm trống ghi `(không có)`. Danh sách dài tách nhiều tin, phần sau ghi `Quá hạn (tiếp):`. Không đọc được sheet thì gửi "Không đọc được dữ liệu: …".
-- **23:00 — nhắc:** `Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605`.
+- **23:00 — nhắc:** ảnh động đồng hồ báo thức (`web/reminder-alarm.gif`, phục vụ qua GitHub Pages) kèm chú thích chữ đậm `⏰ NHẮC 23:00 — CẬP NHẬT ĐƠN HÀNG LẤY` + `Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605` (người được gắn tên nhận thông báo kể cả khi tắt tiếng nhóm). Không gửi được GIF thì gửi chữ. Bot **ghim** tin (mọi thành viên nhận thông báo "đã ghim"), bỏ ghim tin nhắc hôm trước — cần cấp cho bot quyền admin "Pin messages"; thiếu quyền thì tin vẫn gửi, chỉ không ghim.
+  Nút **✅ Đã cập nhật**: bấm thì tin ghi thêm `✅ <tên> đã cập nhật lúc HH:mm` (mỗi người một lần). **23:30** chưa ai bấm → bot trả lời tin nhắc bằng `⏰ NHẮC LẦN 2` kèm gắn tên. Trạng thái tin nhắc lưu ở Script Properties (`telegramReminder`).
+  Hiệu ứng tin nhắn (message effect) của Telegram chỉ dùng được trong chat riêng, không dùng trong nhóm.
 - **Lệnh trong nhóm** (gõ `/` để thấy danh sách): `/menu` gửi tin có nút **Backlog | Kiểm kho**; bấm Backlog (hoặc `/backlog`) gửi tin như trên; bấm Kiểm kho (hoặc `/kiemkho`) gửi đơn trong `raw_data` nhóm theo `trang_thai`, kèm số đơn mỗi nhóm (đơn chưa có trạng thái không gửi). Bot chỉ trả lời trong nhóm đã cấu hình.
 - **Giờ gửi chính xác:** mỗi lần gửi dùng trigger chạy một lần (`at`), chạy xong tự hẹn lần kế tiếp; trigger hằng ngày `lapLichTelegram` lúc 03:00 dựng lại lịch nếu có lần bị lỗi.
 - **Webhook:** Telegram gửi lệnh/nút về `doPost` của web app, URL có `?tg=<mã bí mật>` (suy ra từ token, chỉ Telegram biết). Mỗi `update_id` chỉ xử lý một lần (Telegram có thể gửi lại).
