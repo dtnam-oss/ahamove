@@ -207,6 +207,25 @@ Cách gom: mỗi tuyến bắt đầu từ xã ngoài cùng, lần lượt lấy
 
 Key Goong: REST API key ở `gas/config.js` (`GOONG_API_KEY`, không đưa lên git); Maptiles key ở `web/config.js` (`goongMaptilesKey`, công khai — nên giới hạn tên miền trong trang quản trị Goong). Gói miễn phí Maptiles ~1.000 lượt tải bản đồ/tháng; bản đồ chỉ tải khi quét ở chế độ Tuyến.
 
+## Bot Telegram (cảnh báo và lệnh trong nhóm)
+
+Cùng bot và nhóm với thông báo Đồng kiểm (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` trong `gas/config.js`). Code: `gas/telegram-bot.js`.
+
+- **13:00 và 19:00 — cảnh báo backlog:** đơn trong sheet `back_log` có cột `Nhóm hạn` là "Đến hạn hôm nay" hoặc "Quá hạn" (bỏ "Còn hạn"), mỗi mã một lần:
+  ```
+  Đến hạn hôm nay:
+  <mã đơn>
+  Quá hạn:
+  <mã đơn>
+  ```
+  Nhóm trống ghi `(không có)`. Danh sách dài tách nhiều tin, phần sau ghi `Quá hạn (tiếp):`. Không đọc được sheet thì gửi "Không đọc được dữ liệu: …".
+- **23:00 — nhắc:** `Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605`.
+- **Lệnh trong nhóm** (gõ `/` để thấy danh sách): `/menu` gửi tin có nút **Backlog | Kiểm kho**; bấm Backlog (hoặc `/backlog`) gửi tin như trên; bấm Kiểm kho (hoặc `/kiemkho`) gửi đơn trong `raw_data` nhóm theo `trang_thai`, kèm số đơn mỗi nhóm (đơn chưa có trạng thái không gửi). Bot chỉ trả lời trong nhóm đã cấu hình.
+- **Giờ gửi chính xác:** mỗi lần gửi dùng trigger chạy một lần (`at`), chạy xong tự hẹn lần kế tiếp; trigger hằng ngày `lapLichTelegram` lúc 03:00 dựng lại lịch nếu có lần bị lỗi.
+- **Webhook:** Telegram gửi lệnh/nút về `doPost` của web app, URL có `?tg=<mã bí mật>` (suy ra từ token, chỉ Telegram biết). Mỗi `update_id` chỉ xử lý một lần (Telegram có thể gửi lại).
+
+**Cài đặt (một lần, chủ script):** sau khi `clasp push`, mở trình soạn thảo Apps Script (`clasp open-script`), chọn hàm `caiDatTelegram` → Run → cấp quyền (thêm quyền quản lý trigger). Hàm này tạo lịch, đặt webhook và danh sách lệnh; chạy lại không bị trùng. Sau đó mới `clasp update-deployment` (bản deploy mới cần quyền đã cấp). Kiểm tra: chạy `kiemTraTelegram` (webhook đúng, số update đang chờ, lỗi gần nhất).
+
 ## Cấu trúc
 
 ```
@@ -223,6 +242,7 @@ gas/                  backend Apps Script
   routes.js           taoCauHinhTuyen / boSungTuyen: gom phường/xã thành tuyến (config_tuyen)
   goong.js            gọi Goong geocode (kiểm tra đúng quận/huyện)
   telegram.js         gửi tin nhắn vào nhóm Telegram (thông báo Đồng kiểm)
+  telegram-bot.js     tin cảnh báo backlog 13:00/19:00, nhắc 23:00, lệnh /menu /backlog /kiemkho (webhook doPost ?tg=)
   locate.js           ?action=locate&code=: toạ độ một đơn cho bản đồ (cache toa_do_don)
   trips.js            createTrip / endTrip / listTrips / openTrips: chuyến đi ở sheet chuyen_di
   scan-rounds.js      pendingPu (?action=pendingpu) / saveDongKiem / saveTraHang / saveKiemKho: danh sách chờ lấy; đơn nhận / trả / kiểm kho ở sheet data_dong_kiem / tra_hang / kiem_kho

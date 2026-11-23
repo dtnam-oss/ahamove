@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import nodeCrypto from 'node:crypto';
 
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 
@@ -80,16 +81,22 @@ function loadServer(tables, geo = {}) {
   };
   // Telegram sendMessage: bodies are kept in ctx.telegram; geo.telegramError = API error description,
   // geo.telegramDown = network failure (its message carries the URL, so the token must be scrubbed).
+  // Every other Bot API call is kept in ctx.telegramCalls as {method, body}.
   const telegram = [];
+  const telegramCalls = [];
   const tg = (url, opts) => {
-    assert.equal(url, 'https://api.telegram.org/bottest-token/sendMessage');
+    const method = url.replace('https://api.telegram.org/bottest-token/', '');
+    assert.match(method, /^\w+$/, url);
     assert.equal(opts.muteHttpExceptions, true);
     if (geo.telegramDown) throw new Error('Địa chỉ không khả dụng: ' + url);
-    telegram.push(JSON.parse(opts.payload));
+    const body = JSON.parse(opts.payload);
+    if (method === 'sendMessage') telegram.push(body);
+    else telegramCalls.push({ method, body });
     const fail = geo.telegramError;
+    const result = method === 'getWebhookInfo' ? (geo.webhookInfo || {}) : true;
     return {
       getResponseCode: () => (fail ? 400 : 200),
-      getContentText: () => JSON.stringify(fail ? { ok: false, description: fail } : { ok: true }),
+      getContentText: () => JSON.stringify(fail ? { ok: false, description: fail } : { ok: true, result }),
     };
   };
   const UrlFetchApp = {
@@ -112,7 +119,29 @@ function loadServer(tables, geo = {}) {
       };
       return pattern.replace(/yyyy|yy|MM|dd|HH|mm|ss/g, (k) => parts[k]);
     },
+    DigestAlgorithm: { SHA_256: 'sha256' },
+    // Apps Script returns signed bytes.
+    computeDigest: (alg, text) => Array.from(nodeCrypto.createHash(alg).update(text, 'utf8').digest(), (b) => (b > 127 ? b - 256 : b)),
   };
+  // Installable triggers: ctx.triggers lists {handler, at | daily: {hour, tz}}.
+  const triggers = [];
+  const ScriptApp = {
+    getProjectTriggers: () => triggers.map((t) => ({ t, getHandlerFunction: () => t.handler })),
+    deleteTrigger: (w) => { triggers.splice(triggers.indexOf(w.t), 1); },
+    newTrigger: (handler) => {
+      const t = { handler };
+      const clock = {
+        at(date) { t.at = date; return clock; },
+        atHour(h) { t.daily = { hour: h }; return clock; },
+        everyDays(n) { assert.equal(n, 1); return clock; },
+        inTimezone(tz) { t.daily.tz = tz; return clock; },
+        create() { triggers.push(t); return t; },
+      };
+      return { timeBased: () => clock };
+    },
+  };
+  const cacheStore = {};
+  const CacheService = { getScriptCache: () => ({ get: (k) => cacheStore[k] || null, put: (k, v) => { cacheStore[k] = v; } }) };
   const ContentService = {
     MimeType: { JSON: 'json' },
     createTextOutput: (text) => ({ text, setMimeType(m) { this.mime = m; return this; } }),
@@ -120,10 +149,10 @@ function loadServer(tables, geo = {}) {
   const LockService = { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) };
   const ctx = vm.createContext({
     SpreadsheetApp: { openById: () => spreadsheet, flush() {} }, ContentService, LockService, UrlFetchApp, Utilities, console, geocoded,
-    telegram,
+    telegram, telegramCalls, ScriptApp, triggers, CacheService,
   });
   const telegramOn = geo.telegramOff ? (s) => s : (s) => s.replace("TELEGRAM_BOT_TOKEN = ''", "TELEGRAM_BOT_TOKEN = 'test-token'")
-    .replace("TELEGRAM_CHAT_ID = ''", "TELEGRAM_CHAT_ID = '-100test'");
+    .replace("TELEGRAM_CHAT_ID = ''", `TELEGRAM_CHAT_ID = '${geo.chatId || '-100test'}'`);
   vm.runInContext(telegramOn(read('gas/config.example.js').replace("GOONG_API_KEY = ''", "GOONG_API_KEY = 'test-key'")
     .replace("'YOUR_PENDING_PU_SHEET_ID'", "'test-pending-pu'")), ctx);
   vm.runInContext(read('gas/Code.js'), ctx);
@@ -133,6 +162,7 @@ function loadServer(tables, geo = {}) {
   vm.runInContext(read('gas/trips.js'), ctx);
   vm.runInContext(read('gas/telegram.js'), ctx);
   vm.runInContext(read('gas/scan-rounds.js'), ctx);
+  vm.runInContext(read('gas/telegram-bot.js'), ctx);
   return ctx;
 }
 
@@ -1149,4 +1179,143 @@ test('parsePcLink reads the pc-typer pairing hash and rejects malformed parts', 
   assert.equal(L.parsePcLink('#pc=%E0%A4%A&key=ABCD2345'), null, 'bad escape');
   assert.equal(L.validPcLink('1.2.3.4:8443', 'ABCD2345'), true);
   assert.equal(L.validPcLink(null, 'ABCD2345'), false);
+});
+
+// ---------- Telegram group bot (gas/telegram-bot.js) ----------
+
+// Mirrors sheet back_log: "Nhóm hạn" decides which orders are alerted.
+const BACK_LOG = [
+  ['tracking_number', 'Ngày N (cột date)', 'Hạn final', 'Còn lại (ngày), âm là quá hạn', 'Nhóm hạn', 'Partner'],
+  ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn'],
+  [' gyedh001 ', '18/11/2026', '23/11/2026', '0', 'Đến hạn hôm nay', 'ghn'],
+  ['GYECH001', '22/11/2026', '28/11/2026', '5', 'Còn hạn', 'ghn'],
+  ['GYEQH002', '09/11/2026', '19/11/2026', '-4', ' Quá hạn ', 'ghn'],
+  ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn'], // repeated row
+  ['', '', '', '', 'Quá hạn', ''],
+];
+// raw_data with trang_thai: orders without a state are left out of Kiểm kho.
+const RAW_STATES = [
+  ['date', 'tracking_number', 'status', 'district', 'ket_qua', 'trang_thai'],
+  ['2026-11-10', 'GYETH001', 'RETURNING', 'Quận 1', 'Quá hạn', 'Trả hàng'],
+  ['2026-11-10', 'GYEGT001', 'FAILED', 'Quận 1', 'Còn hạn', 'Giao thất bại'],
+  ['2026-11-10', 'gyeth002', 'RETURNING', 'Quận 1', 'Còn hạn', 'Trả hàng'],
+  ['2026-11-10', 'GYENO001', 'ASSIGNING', 'Quận 1', 'Còn hạn', ''],
+  ['2026-11-10', 'GYETH001', 'RETURNING', 'Quận 1', 'Quá hạn', 'Giao thất bại'], // repeated code: first row wins
+];
+const TG_SECRET = nodeCrypto.createHash('sha256').update('webhook:test-token').digest('hex').slice(0, 32);
+const tgPost = (server, update, secret = TG_SECRET) => server.doPost({ parameter: { tg: secret }, postData: { contents: JSON.stringify(update) } });
+const texts = (server) => server.telegram.map((m) => m.text);
+
+test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" codes, once each, and plans the next runs', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG, back_log: BACK_LOG });
+  server.guiCanhBaoBacklog();
+  assert.deepEqual(texts(server), ['Đến hạn hôm nay:\nGYEDH001\nQuá hạn:\nGYEQH001\nGYEQH002']);
+  assert.equal(server.telegram[0].chat_id, '-100test');
+  assert.deepEqual(server.triggers.map((t) => t.handler), ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon']);
+  // Each one-time trigger is at 13:00, 19:00 or 23:00 Vietnam time, within the next day.
+  const vnHour = (d) => new Date(d.getTime() + 7 * 3600e3).getUTCHours();
+  assert.deepEqual(server.triggers.map((t) => vnHour(t.at)), [13, 19, 23]);
+  server.triggers.forEach((t) => {
+    assert.equal(t.at.getUTCMinutes() + t.at.getUTCSeconds(), 0);
+    assert.ok(t.at > Date.now() && t.at - Date.now() <= 864e5);
+  });
+  server.guiNhacCapNhatDon();
+  assert.equal(texts(server)[1], 'Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605');
+  assert.equal(server.triggers.length, 3, 'runs re-plan instead of piling up triggers');
+
+  // Empty groups say so; a sheet problem is reported to the group instead of failing silently.
+  const none = loadServer({ raw_data: DATA, config: CONFIG, back_log: [BACK_LOG[0], BACK_LOG[3]] });
+  none.guiCanhBaoBacklog();
+  assert.deepEqual(texts(none), ['Đến hạn hôm nay:\n(không có)\nQuá hạn:\n(không có)']);
+  const broken = loadServer({ raw_data: DATA, config: CONFIG, back_log: [['tracking_number', 'Partner']] });
+  broken.guiCanhBaoBacklog();
+  assert.match(texts(broken)[0], /^Không đọc được dữ liệu: Sheet "back_log" thiếu cột Nhóm hạn/);
+  assert.equal(broken.triggers.length, 3, 'the next runs are planned even after an error');
+});
+
+test('a long backlog alert is split under the Telegram limit and the section goes on with "(tiếp)"', () => {
+  const due = Array.from({ length: 30 }, (_, i) => 'GYED' + String(i).padStart(4, '0'));
+  const late = Array.from({ length: 700 }, (_, i) => 'GYEQ' + String(i).padStart(4, '0'));
+  const rows = [BACK_LOG[0], ...due.map((c) => [c, '', '', '0', 'Đến hạn hôm nay']), ...late.map((c) => [c, '', '', '-1', 'Quá hạn'])];
+  const server = loadServer({ raw_data: DATA, config: CONFIG, back_log: rows });
+  server.guiCanhBaoBacklog();
+  const msgs = texts(server);
+  assert.ok(msgs.length > 1);
+  msgs.forEach((m) => assert.ok(m.length <= 4000));
+  assert.match(msgs[1], /^Quá hạn \(tiếp\):\nGYEQ/);
+  const codes = msgs.flatMap((m) => m.split('\n')).filter((l) => /^GYE/.test(l));
+  assert.deepEqual(codes, [...due, ...late]);
+});
+
+test('nextVnTime_ picks today or tomorrow in Vietnam time, never within the next minute', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG });
+  const at = (iso, hour) => server.nextVnTime_(hour, new Date(iso)).toISOString();
+  assert.equal(at('2026-11-23T06:00:30Z', 13), '2026-11-24T06:00:00.000Z', 'just after 13:00 → tomorrow');
+  assert.equal(at('2026-11-23T06:00:30Z', 19), '2026-11-23T12:00:00.000Z');
+  assert.equal(at('2026-11-23T05:59:50Z', 13), '2026-11-24T06:00:00.000Z', 'a trigger firing a few seconds early');
+  assert.equal(at('2026-11-23T17:30:00Z', 13), '2026-11-24T06:00:00.000Z', '00:30 Vietnam time is already the 24th');
+  assert.equal(at('2026-11-23T15:59:00Z', 23), '2026-11-24T16:00:00.000Z');
+  assert.equal(at('2026-11-23T15:58:00Z', 23), '2026-11-23T16:00:00.000Z');
+});
+
+test('group commands and buttons: /menu shows Backlog | Kiểm kho, buttons and commands send the lists', () => {
+  const server = loadServer({ raw_data: RAW_STATES, config: CONFIG, back_log: BACK_LOG }, { chatId: '-100' });
+  const group = { id: -100, type: 'supergroup' }; // Telegram sends the chat id as a number
+  assert.equal(tgPost(server, { update_id: 1, message: { chat: group, text: '/menu@NAKVIETNAM_bot' } }), undefined, 'nothing is returned to Telegram');
+  assert.deepEqual(JSON.parse(JSON.stringify(server.telegram[0])), {
+    chat_id: '-100', text: 'Chọn danh sách cần xem:', disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: [[{ text: 'Backlog', callback_data: 'backlog' }, { text: 'Kiểm kho', callback_data: 'kiemkho' }]] },
+  });
+
+  tgPost(server, { update_id: 2, callback_query: { id: 'cb1', data: 'kiemkho', message: { chat: group } } });
+  assert.deepEqual(JSON.parse(JSON.stringify(server.telegramCalls)), [{ method: 'answerCallbackQuery', body: { callback_query_id: 'cb1' } }]);
+  assert.equal(texts(server)[1], 'Trả hàng (2 đơn):\nGYETH001\nGYETH002\nGiao thất bại (1 đơn):\nGYEGT001');
+
+  tgPost(server, { update_id: 3, callback_query: { id: 'cb2', data: 'backlog', message: { chat: group } } });
+  assert.equal(texts(server)[2], 'Đến hạn hôm nay:\nGYEDH001\nQuá hạn:\nGYEQH001\nGYEQH002');
+  tgPost(server, { update_id: 4, message: { chat: group, text: '/kiemkho' } });
+  tgPost(server, { update_id: 5, message: { chat: group, text: ' /BACKLOG xin danh sách' } });
+  assert.equal(server.telegram.length, 5);
+
+  // Ignored: a re-sent update, other chats, plain text, unknown commands, a wrong or missing secret.
+  const before = server.telegram.length;
+  tgPost(server, { update_id: 5, message: { chat: group, text: '/backlog' } });
+  tgPost(server, { update_id: 6, message: { chat: { id: -999 }, text: '/menu' } });
+  tgPost(server, { update_id: 7, callback_query: { id: 'cb3', data: 'backlog', message: { chat: { id: -999 } } } });
+  tgPost(server, { update_id: 8, message: { chat: group, text: 'menu' } });
+  tgPost(server, { update_id: 9, message: { chat: group, text: '/menus' } });
+  tgPost(server, { update_id: 10, message: { chat: group, sticker: {} } });
+  const wrong = tgPost(server, { update_id: 11, message: { chat: group, text: '/menu' } }, 'wrong');
+  assert.match(JSON.parse(wrong.text).error, /Thao tác không hợp lệ/, 'without the secret it is an ordinary app request');
+  assert.equal(server.telegram.length, before);
+  assert.equal(server.telegramCalls.length, 2);
+});
+
+test('caiDatTelegram schedules the messages, the daily re-plan, the webhook and the command list; safe to rerun', () => {
+  const server = loadServer({ raw_data: DATA, config: CONFIG, back_log: BACK_LOG });
+  const r = plain(server.caiDatTelegram());
+  assert.equal(r.webhook, 'ok');
+  assert.equal(r.lenh, 'ok');
+  assert.equal(r.lich.length, 3);
+  server.caiDatTelegram();
+  const handlers = server.triggers.map((t) => t.handler).sort();
+  assert.deepEqual(handlers, ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon', 'lapLichTelegram']);
+  assert.deepEqual(plain(server.triggers.find((t) => t.handler === 'lapLichTelegram').daily), { hour: 3, tz: 'Asia/Ho_Chi_Minh' });
+
+  const hook = plain(server.telegramCalls.find((c) => c.method === 'setWebhook').body);
+  const appUrl = read('web/config.js').match(/apiUrl: '([^']+)'/)[1];
+  assert.equal(hook.url, appUrl + '?tg=' + TG_SECRET, 'webhook = the app backend + secret');
+  assert.deepEqual(hook.allowed_updates, ['message', 'callback_query']);
+  const cmds = plain(server.telegramCalls.find((c) => c.method === 'setMyCommands').body);
+  assert.deepEqual(cmds.commands.map((c) => c.command), ['menu', 'backlog', 'kiemkho']);
+  assert.deepEqual(cmds.scope, { type: 'chat', chat_id: '-100test' });
+  assert.equal(server.telegram.length, 0, 'setup sends nothing to the group');
+
+  const off = loadServer({ raw_data: DATA, config: CONFIG }, { telegramOff: true });
+  assert.throws(() => off.caiDatTelegram(), /Chưa đặt TELEGRAM_BOT_TOKEN/);
+  assert.equal(off.isTelegramUpdate_({ parameter: { tg: '' } }), false);
+
+  const info = loadServer({ raw_data: DATA, config: CONFIG }, { webhookInfo: { url: appUrl + '?tg=' + TG_SECRET, pending_update_count: 0, last_error_message: 'Wrong response' } });
+  const k = plain(info.kiemTraTelegram());
+  assert.deepEqual([k.status, k.webhookDung, k.dangCho, k.loiGanNhat], ['ok', true, 0, 'Wrong response']);
 });

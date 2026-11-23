@@ -6,7 +6,8 @@
 // GET ?action=trips&day=dd/MM/yyyy / ?action=opentrips and POST {action:'trip'|'endTrip'} manage trips (see trips.js).
 // GET ?action=pendingpu lists pending pick-up orders per warehouse for Đồng kiểm; POST {action:'dongkiem'|'trahang',
 // ngay, kho, codes} saves a round of received / returned orders; POST {action:'kiemkho', ngay, codes} saves a
-// stock-check session to sheet kiem_kho (see scan-rounds.js).
+// stock-check session to sheet kiem_kho (see scan-rounds.js). POST ?tg=<secret> = Telegram group updates
+// (commands and buttons, see telegram-bot.js).
 // Customer PII (name, phone, address) never leaves the sheet.
 //
 // The UI is hosted outside Apps Script (GitHub Pages, see web/) because the Apps Script
@@ -167,6 +168,16 @@ function readReturns_(ss) {
  * Errors are returned as {error}, like doGet.
  */
 function doPost(e) {
+  // Updates from the Telegram group (webhook URL carries a secret, see telegram-bot.js). Nothing is returned:
+  // Telegram only needs the request to succeed, and a JSON answer would come back as a redirect it rejects.
+  if (isTelegramUpdate_(e)) {
+    try {
+      handleTelegramUpdate_(JSON.parse(e.postData.contents));
+    } catch (err) {
+      console.error('Telegram update: ' + String((err && err.message) || err));
+    }
+    return;
+  }
   try {
     const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
     if (body.action === 'trip') return jsonOutput_(createTrip(body.plate, body.codes));

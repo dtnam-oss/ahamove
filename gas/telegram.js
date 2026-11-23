@@ -3,28 +3,45 @@
 
 const TELEGRAM_MAX_TEXT = 4000; // Telegram rejects messages over 4096 characters
 
+/** {token, chat} from config.js; empty strings when not set. */
+function telegramConfig_() {
+  return {
+    token: typeof TELEGRAM_BOT_TOKEN === 'undefined' ? '' : String(TELEGRAM_BOT_TOKEN).trim(),
+    chat: typeof TELEGRAM_CHAT_ID === 'undefined' ? '' : String(TELEGRAM_CHAT_ID).trim(),
+  };
+}
+
 /**
- * Send plain text (no Markdown, so order codes need no escaping). Returns 'ok', 'off' when the bot is not
- * configured, or 'lỗi: <reason>'. The token is part of the request URL, so it is scrubbed from any error.
+ * Call one Bot API method. Returns {status, result}: status 'ok', 'off' when the bot is not configured, or
+ * 'lỗi: <reason>'. The token is part of the request URL, so it is scrubbed from any error.
  */
-function sendTelegram_(text) {
-  const token = typeof TELEGRAM_BOT_TOKEN === 'undefined' ? '' : String(TELEGRAM_BOT_TOKEN).trim();
-  const chat = typeof TELEGRAM_CHAT_ID === 'undefined' ? '' : String(TELEGRAM_CHAT_ID).trim();
-  if (!token || !chat) return 'off';
+function telegramApi_(method, payload) {
+  const conf = telegramConfig_();
+  if (!conf.token || !conf.chat) return { status: 'off' };
   try {
-    const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + token + '/sendMessage', {
+    const res = UrlFetchApp.fetch('https://api.telegram.org/bot' + conf.token + '/' + method, {
       method: 'post',
       contentType: 'application/json',
-      payload: JSON.stringify({ chat_id: chat, text: text, disable_web_page_preview: true }),
+      payload: JSON.stringify(payload),
       muteHttpExceptions: true,
     });
     let body = {};
     try { body = JSON.parse(res.getContentText()); } catch (e) { /* not JSON: reported by the HTTP code */ }
-    if (res.getResponseCode() === 200 && body.ok) return 'ok';
-    return 'lỗi: ' + (body.description || 'HTTP ' + res.getResponseCode());
+    if (res.getResponseCode() === 200 && body.ok) return { status: 'ok', result: body.result };
+    return { status: 'lỗi: ' + (body.description || 'HTTP ' + res.getResponseCode()) };
   } catch (err) {
-    return 'lỗi: ' + String((err && err.message) || err).split(token).join('***');
+    return { status: 'lỗi: ' + String((err && err.message) || err).split(conf.token).join('***') };
   }
+}
+
+/**
+ * Send plain text to the group (no Markdown, so order codes need no escaping; @username mentions still work).
+ * `extra` adds sendMessage fields such as reply_markup. Returns 'ok', 'off' or 'lỗi: <reason>'.
+ */
+function sendTelegram_(text, extra) {
+  const payload = { chat_id: telegramConfig_().chat, text: text, disable_web_page_preview: true };
+  Object.keys(extra || {}).forEach(function (k) { payload[k] = extra[k]; });
+  return telegramApi_('sendMessage', payload).status;
 }
 
 /**
