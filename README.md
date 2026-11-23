@@ -213,11 +213,12 @@ Cùng bot và nhóm với thông báo Đồng kiểm (`TELEGRAM_BOT_TOKEN`, `TEL
 
 - **13:00 và 19:00 — cảnh báo backlog:** đơn trong sheet `back_log` có cột `Nhóm hạn` là "Đến hạn hôm nay" hoặc "Quá hạn" (bỏ "Còn hạn"), mỗi mã một dòng `tracking_number - Còn lại (ngày), âm là quá hạn - Status đơn` (phần trống thì bỏ), mỗi mã một lần:
   ```
-  Đến hạn hôm nay:
+  🟡 Đến hạn hôm nay:
   GYEC3EFW - 0 - FAILED
-  Quá hạn:
+  🔴 Quá hạn:
   GYEG469L - -9 - NEED_RETURN_TO_PARTNER_EOD
   ```
+  Tiêu đề nhóm trạng thái của Kiểm kho có 📦 phía trước.
   Nhóm trống ghi `(không có)`. Danh sách dài tách nhiều tin, phần sau ghi `Quá hạn (tiếp):`. Không đọc được sheet thì gửi "Không đọc được dữ liệu: …".
 - **23:00 — nhắc:** `Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605`.
 - **Lệnh trong nhóm** (gõ `/` để thấy danh sách): `/menu` gửi tin có nút **Backlog | Kiểm kho**; bấm Backlog (hoặc `/backlog`) gửi tin như trên; bấm Kiểm kho (hoặc `/kiemkho`) gửi đơn trong `raw_data` nhóm theo `trang_thai`, kèm số đơn mỗi nhóm (đơn chưa có trạng thái không gửi). Bot chỉ trả lời trong nhóm đã cấu hình.

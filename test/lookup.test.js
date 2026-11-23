@@ -1193,7 +1193,7 @@ const BACK_LOG = [
   ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn', 'FAILED'], // repeated row
   ['', '', '', '', 'Quá hạn', '', ''],
 ];
-const BACKLOG_TEXT = 'Đến hạn hôm nay:\nGYEDH001 - 0 - TRANSPORTING\nQuá hạn:\nGYEQH001 - -3 - NEED_RETURN_TO_PARTNER_EOD\nGYEQH002 - -4';
+const BACKLOG_TEXT = '🟡 Đến hạn hôm nay:\nGYEDH001 - 0 - TRANSPORTING\n🔴 Quá hạn:\nGYEQH001 - -3 - NEED_RETURN_TO_PARTNER_EOD\nGYEQH002 - -4';
 // raw_data with trang_thai: orders without a state are left out of Kiểm kho.
 const RAW_STATES = [
   ['date', 'tracking_number', 'status', 'district', 'ket_qua', 'trang_thai'],
@@ -1227,7 +1227,7 @@ test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" as code - da
   // Empty groups say so; a sheet problem is reported to the group instead of failing silently.
   const none = loadServer({ raw_data: DATA, config: CONFIG, back_log: [BACK_LOG[0], BACK_LOG[3]] });
   none.guiCanhBaoBacklog();
-  assert.deepEqual(texts(none), ['Đến hạn hôm nay:\n(không có)\nQuá hạn:\n(không có)']);
+  assert.deepEqual(texts(none), ['🟡 Đến hạn hôm nay:\n(không có)\n🔴 Quá hạn:\n(không có)']);
   const broken = loadServer({ raw_data: DATA, config: CONFIG, back_log: [['tracking_number', 'Partner']] });
   broken.guiCanhBaoBacklog();
   assert.match(texts(broken)[0], /^Không đọc được dữ liệu: Sheet "back_log" thiếu cột Nhóm hạn/);
@@ -1244,7 +1244,7 @@ test('a long backlog alert is split under the Telegram limit and the section goe
   const msgs = texts(server);
   assert.ok(msgs.length > 1);
   msgs.forEach((m) => assert.ok(m.length <= 4000));
-  assert.match(msgs[1], /^Quá hạn \(tiếp\):\nGYEQ/);
+  assert.match(msgs[1], /^🔴 Quá hạn \(tiếp\):\nGYEQ/);
   const lines = msgs.flatMap((m) => m.split('\n')).filter((l) => /^GYE/.test(l));
   assert.deepEqual(lines, [...due.map((c) => c + ' - 0 - TRANSPORTING'), ...late.map((c) => c + ' - -1 - NEED_RETURN_TO_PARTNER_EOD')]);
 });
@@ -1271,7 +1271,7 @@ test('group commands and buttons: /menu shows Backlog | Kiểm kho, buttons and 
 
   tgPost(server, { update_id: 2, callback_query: { id: 'cb1', data: 'kiemkho', message: { chat: group } } });
   assert.deepEqual(JSON.parse(JSON.stringify(server.telegramCalls)), [{ method: 'answerCallbackQuery', body: { callback_query_id: 'cb1' } }]);
-  assert.equal(texts(server)[1], 'Trả hàng (2 đơn):\nGYETH001\nGYETH002\nGiao thất bại (1 đơn):\nGYEGT001');
+  assert.equal(texts(server)[1], '📦 Trả hàng (2 đơn):\nGYETH001\nGYETH002\n📦 Giao thất bại (1 đơn):\nGYEGT001');
 
   tgPost(server, { update_id: 3, callback_query: { id: 'cb2', data: 'backlog', message: { chat: group } } });
   assert.equal(texts(server)[2], BACKLOG_TEXT);

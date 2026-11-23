@@ -17,6 +17,9 @@ const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzLymx4Xid60ooLJUYW
 const BACKLOG_GROUP_COLUMN = 'Nhóm hạn';
 const BACKLOG_STATUS_COLUMN = 'Status đơn';
 const BACKLOG_ALERT_GROUPS = ['Đến hạn hôm nay', 'Quá hạn']; // message order
+// Emoji in front of each section title, so the titles stand out from the order lines.
+const BACKLOG_GROUP_ICONS = { 'Đến hạn hôm nay': '🟡', 'Quá hạn': '🔴' };
+const STATE_ICON = '📦';
 const UPDATE_REMINDER = 'Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605';
 
 const TELEGRAM_SCHEDULE = [
@@ -78,7 +81,9 @@ function backlogAlertMessages_() {
     const status = String(r[table.col[BACKLOG_STATUS_COLUMN]]).trim();
     lines[group].push([code, days, status].filter(String).join(' - '));
   });
-  return sectionMessages_(BACKLOG_ALERT_GROUPS.map(function (g) { return { title: g, lines: lines[g] }; }));
+  return sectionMessages_(BACKLOG_ALERT_GROUPS.map(function (g) {
+    return { title: BACKLOG_GROUP_ICONS[g] + ' ' + g, lines: lines[g] };
+  }));
 }
 
 /** Codes of raw_data grouped by trang_thai (first row of a code wins), in the order the states appear. */
@@ -97,7 +102,7 @@ function kiemKhoStateMessages_() {
     byState[state].push(code);
   });
   if (!groups.length) return ['Không có đơn nào có trạng thái trong raw_data.'];
-  return sectionMessages_(groups.map(function (s) { return { title: s + ' (' + byState[s].length + ' đơn)', lines: byState[s] }; }));
+  return sectionMessages_(groups.map(function (s) { return { title: STATE_ICON + ' ' + s + ' (' + byState[s].length + ' đơn)', lines: byState[s] }; }));
 }
 
 /** Build the messages, sending an error notice instead when the sheet cannot be read. */
