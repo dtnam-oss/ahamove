@@ -90,7 +90,7 @@ Bấm **Đồng kiểm** → trang tải danh sách chờ lấy (sheet `export_r
 | Danh sách chưa tải được | "Chưa tải danh sách" (mở lại tab để tải lại) |
 
 - Lượt đang quét được lưu trên máy. **Kết thúc** gửi cả lượt (chỉ đơn "Có") lên một lần, ghi sheet `data_dong_kiem` (tự tạo): mỗi đơn một dòng `ngay | kho | ma_don | thoi_gian`, dạng text. Cột được tìm theo tên tiêu đề — sheet tự tạo trước với thứ tự cột khác vẫn ghi đúng, cột thiếu được thêm vào cuối.
-- Ghi xong, server gửi thông báo vào nhóm Telegram (bot `TELEGRAM_BOT_TOKEN`, nhóm `TELEGRAM_CHAT_ID` trong `gas/config.js`): dòng đầu `Đồng kiểm kho <kho> · ngày nhận <ngày>`, rồi `Đã lấy thành công N đơn:` và danh sách mã đánh số. Lượt dài được tách thành nhiều tin (giới hạn 4096 ký tự của Telegram). Trả hàng và Kiểm kho không gửi.
+- Ghi xong, server gửi thông báo vào nhóm Telegram (bot `TELEGRAM_BOT_TOKEN`, nhóm `TELEGRAM_CHAT_ID` trong `gas/config.js`): dòng đầu `Đồng kiểm kho <kho> · ngày nhận <ngày>`, rồi `Đã lấy thành công N đơn:` và danh sách mã, mỗi mã một dòng, không đánh số. Lượt dài được tách thành nhiều tin (giới hạn 4096 ký tự của Telegram). Trả hàng và Kiểm kho không gửi.
 - Gửi Telegram lỗi (bot chưa ở trong nhóm, mất mạng…) không làm hỏng lượt đã ghi: dòng báo sau khi ghi có thêm "Telegram lỗi: …"; gửi được thì "đã gửi Telegram". Để trống token hoặc chat id thì không gửi.
 
 ## Chế độ Trả hàng

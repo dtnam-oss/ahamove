@@ -1022,7 +1022,7 @@ test('saved đồng kiểm round posts warehouse + picked-up codes to the Telegr
   assert.equal(r.telegram, 'ok');
   assert.deepEqual(JSON.parse(JSON.stringify(server.telegram)), [{
     chat_id: '-100test',
-    text: 'Đồng kiểm kho Yên Phong · ngày nhận 21/11/2026\nĐã lấy thành công 2 đơn:\n1. GYE7WB4C\n2. GYEFAPQW',
+    text: 'Đồng kiểm kho Yên Phong · ngày nhận 21/11/2026\nĐã lấy thành công 2 đơn:\nGYE7WB4C\nGYEFAPQW',
     disable_web_page_preview: true,
   }]);
 
@@ -1037,7 +1037,7 @@ test('saved đồng kiểm round posts warehouse + picked-up codes to the Telegr
   assert.ok(big.telegram.length > 1);
   big.telegram.forEach((m) => assert.ok(m.text.length <= 4000));
   assert.match(big.telegram[1].text, /^Đồng kiểm kho Thuận Thành · ngày nhận 21\/11\/2026\nĐã lấy thành công 600 đơn: \(tiếp\)\n/);
-  const sent = big.telegram.flatMap((m) => m.text.split('\n').filter((l) => /^\d+\. /.test(l)).map((l) => l.replace(/^\d+\. /, '')));
+  const sent = big.telegram.flatMap((m) => m.text.split('\n').slice(2)); // after the two header lines
   assert.deepEqual(sent, many);
 });
 

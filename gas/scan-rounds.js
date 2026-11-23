@@ -101,10 +101,10 @@ function saveScanRound_(kind, ngay, kho, codes) {
   return result;
 }
 
-/** Telegram notice of a saved Đồng kiểm round: warehouse + day, then the numbered picked-up codes. */
+/** Telegram notice of a saved Đồng kiểm round: warehouse + day, then the picked-up codes one per line. */
 function notifyDongKiem_(day, kho, codes) {
   const header = 'Đồng kiểm kho ' + kho + ' · ngày nhận ' + day + '\nĐã lấy thành công ' + codes.length + ' đơn:';
-  return sendTelegramAll_(telegramMessages_(header, codes.map(function (c, i) { return (i + 1) + '. ' + c; })));
+  return sendTelegramAll_(telegramMessages_(header, codes));
 }
 
 /**
