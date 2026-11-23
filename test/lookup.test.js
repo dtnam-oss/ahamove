@@ -1185,14 +1185,15 @@ test('parsePcLink reads the pc-typer pairing hash and rejects malformed parts', 
 
 // Mirrors sheet back_log: "Nhóm hạn" decides which orders are alerted.
 const BACK_LOG = [
-  ['tracking_number', 'Ngày N (cột date)', 'Hạn final', 'Còn lại (ngày), âm là quá hạn', 'Nhóm hạn', 'Partner'],
-  ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn'],
-  [' gyedh001 ', '18/11/2026', '23/11/2026', '0', 'Đến hạn hôm nay', 'ghn'],
-  ['GYECH001', '22/11/2026', '28/11/2026', '5', 'Còn hạn', 'ghn'],
-  ['GYEQH002', '09/11/2026', '19/11/2026', '-4', ' Quá hạn ', 'ghn'],
-  ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn'], // repeated row
-  ['', '', '', '', 'Quá hạn', ''],
+  ['tracking_number', 'Ngày N (cột date)', 'Hạn final', 'Còn lại (ngày), âm là quá hạn', 'Nhóm hạn', 'Partner', 'Status đơn'],
+  ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn', 'NEED_RETURN_TO_PARTNER_EOD'],
+  [' gyedh001 ', '18/11/2026', '23/11/2026', '0', 'Đến hạn hôm nay', 'ghn', 'TRANSPORTING'],
+  ['GYECH001', '22/11/2026', '28/11/2026', '5', 'Còn hạn', 'ghn', 'FAILED'],
+  ['GYEQH002', '09/11/2026', '19/11/2026', '-4', ' Quá hạn ', 'ghn', ''], // no status: left out of the line
+  ['GYEQH001', '10/11/2026', '20/11/2026', '-3', 'Quá hạn', 'ghn', 'FAILED'], // repeated row
+  ['', '', '', '', 'Quá hạn', '', ''],
 ];
+const BACKLOG_TEXT = 'Đến hạn hôm nay:\nGYEDH001 - 0 - TRANSPORTING\nQuá hạn:\nGYEQH001 - -3 - NEED_RETURN_TO_PARTNER_EOD\nGYEQH002 - -4';
 // raw_data with trang_thai: orders without a state are left out of Kiểm kho.
 const RAW_STATES = [
   ['date', 'tracking_number', 'status', 'district', 'ket_qua', 'trang_thai'],
@@ -1206,10 +1207,10 @@ const TG_SECRET = nodeCrypto.createHash('sha256').update('webhook:test-token').d
 const tgPost = (server, update, secret = TG_SECRET) => server.doPost({ parameter: { tg: secret }, postData: { contents: JSON.stringify(update) } });
 const texts = (server) => server.telegram.map((m) => m.text);
 
-test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" codes, once each, and plans the next runs', () => {
+test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" as code - days left - status, once each, and plans the next runs', () => {
   const server = loadServer({ raw_data: DATA, config: CONFIG, back_log: BACK_LOG });
   server.guiCanhBaoBacklog();
-  assert.deepEqual(texts(server), ['Đến hạn hôm nay:\nGYEDH001\nQuá hạn:\nGYEQH001\nGYEQH002']);
+  assert.deepEqual(texts(server), [BACKLOG_TEXT]);
   assert.equal(server.telegram[0].chat_id, '-100test');
   assert.deepEqual(server.triggers.map((t) => t.handler), ['guiCanhBaoBacklog', 'guiCanhBaoBacklog', 'guiNhacCapNhatDon']);
   // Each one-time trigger is at 13:00, 19:00 or 23:00 Vietnam time, within the next day.
@@ -1236,15 +1237,16 @@ test('backlog alert lists "Đến hạn hôm nay" then "Quá hạn" codes, once 
 test('a long backlog alert is split under the Telegram limit and the section goes on with "(tiếp)"', () => {
   const due = Array.from({ length: 30 }, (_, i) => 'GYED' + String(i).padStart(4, '0'));
   const late = Array.from({ length: 700 }, (_, i) => 'GYEQ' + String(i).padStart(4, '0'));
-  const rows = [BACK_LOG[0], ...due.map((c) => [c, '', '', '0', 'Đến hạn hôm nay']), ...late.map((c) => [c, '', '', '-1', 'Quá hạn'])];
+  const rows = [BACK_LOG[0], ...due.map((c) => [c, '', '', '0', 'Đến hạn hôm nay', '', 'TRANSPORTING']),
+    ...late.map((c) => [c, '', '', '-1', 'Quá hạn', '', 'NEED_RETURN_TO_PARTNER_EOD'])];
   const server = loadServer({ raw_data: DATA, config: CONFIG, back_log: rows });
   server.guiCanhBaoBacklog();
   const msgs = texts(server);
   assert.ok(msgs.length > 1);
   msgs.forEach((m) => assert.ok(m.length <= 4000));
   assert.match(msgs[1], /^Quá hạn \(tiếp\):\nGYEQ/);
-  const codes = msgs.flatMap((m) => m.split('\n')).filter((l) => /^GYE/.test(l));
-  assert.deepEqual(codes, [...due, ...late]);
+  const lines = msgs.flatMap((m) => m.split('\n')).filter((l) => /^GYE/.test(l));
+  assert.deepEqual(lines, [...due.map((c) => c + ' - 0 - TRANSPORTING'), ...late.map((c) => c + ' - -1 - NEED_RETURN_TO_PARTNER_EOD')]);
 });
 
 test('nextVnTime_ picks today or tomorrow in Vietnam time, never within the next minute', () => {
@@ -1272,7 +1274,7 @@ test('group commands and buttons: /menu shows Backlog | Kiểm kho, buttons and 
   assert.equal(texts(server)[1], 'Trả hàng (2 đơn):\nGYETH001\nGYETH002\nGiao thất bại (1 đơn):\nGYEGT001');
 
   tgPost(server, { update_id: 3, callback_query: { id: 'cb2', data: 'backlog', message: { chat: group } } });
-  assert.equal(texts(server)[2], 'Đến hạn hôm nay:\nGYEDH001\nQuá hạn:\nGYEQH001\nGYEQH002');
+  assert.equal(texts(server)[2], BACKLOG_TEXT);
   tgPost(server, { update_id: 4, message: { chat: group, text: '/kiemkho' } });
   tgPost(server, { update_id: 5, message: { chat: group, text: ' /BACKLOG xin danh sách' } });
   assert.equal(server.telegram.length, 5);

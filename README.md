@@ -211,12 +211,12 @@ Key Goong: REST API key ở `gas/config.js` (`GOONG_API_KEY`, không đưa lên 
 
 Cùng bot và nhóm với thông báo Đồng kiểm (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` trong `gas/config.js`). Code: `gas/telegram-bot.js`.
 
-- **13:00 và 19:00 — cảnh báo backlog:** đơn trong sheet `back_log` có cột `Nhóm hạn` là "Đến hạn hôm nay" hoặc "Quá hạn" (bỏ "Còn hạn"), mỗi mã một lần:
+- **13:00 và 19:00 — cảnh báo backlog:** đơn trong sheet `back_log` có cột `Nhóm hạn` là "Đến hạn hôm nay" hoặc "Quá hạn" (bỏ "Còn hạn"), mỗi mã một dòng `tracking_number - Còn lại (ngày), âm là quá hạn - Status đơn` (phần trống thì bỏ), mỗi mã một lần:
   ```
   Đến hạn hôm nay:
-  <mã đơn>
+  GYEC3EFW - 0 - FAILED
   Quá hạn:
-  <mã đơn>
+  GYEG469L - -9 - NEED_RETURN_TO_PARTNER_EOD
   ```
   Nhóm trống ghi `(không có)`. Danh sách dài tách nhiều tin, phần sau ghi `Quá hạn (tiếp):`. Không đọc được sheet thì gửi "Không đọc được dữ liệu: …".
 - **23:00 — nhắc:** `Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605`.

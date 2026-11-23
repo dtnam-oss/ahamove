@@ -15,6 +15,7 @@
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbzLymx4Xid60ooLJUYW5C3dyUZi_uo1V6PsTXVEAC8vqk2Khd9a_B1yoATmVMRUgcY7/exec';
 
 const BACKLOG_GROUP_COLUMN = 'Nhóm hạn';
+const BACKLOG_STATUS_COLUMN = 'Status đơn';
 const BACKLOG_ALERT_GROUPS = ['Đến hạn hôm nay', 'Quá hạn']; // message order
 const UPDATE_REMINDER = 'Bố Kiên | Bố Quân cập nhật đơn hàng lấy @VanKien0902 @Quanle0605';
 
@@ -38,7 +39,7 @@ const TELEGRAM_MENU = {
 // ---------- Messages ----------
 
 /**
- * "Title:" then one code per line, per section; an empty section says "(không có)". Long lists are split under
+ * "Title:" then its lines, per section; an empty section says "(không có)". Long lists are split under
  * Telegram's limit and a split section goes on with "Title (tiếp):". Lines are never cut.
  */
 function sectionMessages_(sections) {
@@ -52,26 +53,32 @@ function sectionMessages_(sections) {
   }
   sections.forEach(function (s) {
     add(s.title + ':', '');
-    (s.codes.length ? s.codes : ['(không có)']).forEach(function (code) { add(code, s.title); });
+    (s.lines.length ? s.lines : ['(không có)']).forEach(function (line) { add(line, s.title); });
   });
   if (current) messages.push(current);
   return messages;
 }
 
-/** Codes of back_log per alert group ("Đến hạn hôm nay", "Quá hạn"); a code is listed once. */
+/**
+ * back_log orders per alert group ("Đến hạn hôm nay", "Quá hạn"), one line each:
+ * "<code> - <days left, negative = overdue> - <Status đơn>" (an empty part is left out). A code is listed once.
+ */
 function backlogAlertMessages_() {
-  const table = readTable_(SpreadsheetApp.openById(SHEET_ID), BACKLOG_SHEET, ['tracking_number', BACKLOG_GROUP_COLUMN]); // Code.js
-  const codes = {};
-  BACKLOG_ALERT_GROUPS.forEach(function (g) { codes[g] = []; });
+  const table = readTable_(SpreadsheetApp.openById(SHEET_ID), BACKLOG_SHEET,
+    ['tracking_number', BACKLOG_GROUP_COLUMN, BACKLOG_DAYS_COLUMN, BACKLOG_STATUS_COLUMN]); // Code.js
+  const lines = {};
+  BACKLOG_ALERT_GROUPS.forEach(function (g) { lines[g] = []; });
   const seen = {};
   table.rows.forEach(function (r) {
     const code = String(r[table.col.tracking_number]).trim().toUpperCase();
     const group = String(r[table.col[BACKLOG_GROUP_COLUMN]]).trim();
-    if (!code || seen[code] || !codes[group]) return;
+    if (!code || seen[code] || !lines[group]) return;
     seen[code] = true;
-    codes[group].push(code);
+    const days = String(r[table.col[BACKLOG_DAYS_COLUMN]]).trim();
+    const status = String(r[table.col[BACKLOG_STATUS_COLUMN]]).trim();
+    lines[group].push([code, days, status].filter(String).join(' - '));
   });
-  return sectionMessages_(BACKLOG_ALERT_GROUPS.map(function (g) { return { title: g, codes: codes[g] }; }));
+  return sectionMessages_(BACKLOG_ALERT_GROUPS.map(function (g) { return { title: g, lines: lines[g] }; }));
 }
 
 /** Codes of raw_data grouped by trang_thai (first row of a code wins), in the order the states appear. */
@@ -90,7 +97,7 @@ function kiemKhoStateMessages_() {
     byState[state].push(code);
   });
   if (!groups.length) return ['Không có đơn nào có trạng thái trong raw_data.'];
-  return sectionMessages_(groups.map(function (s) { return { title: s + ' (' + byState[s].length + ' đơn)', codes: byState[s] }; }));
+  return sectionMessages_(groups.map(function (s) { return { title: s + ' (' + byState[s].length + ' đơn)', lines: byState[s] }; }));
 }
 
 /** Build the messages, sending an error notice instead when the sheet cannot be read. */
